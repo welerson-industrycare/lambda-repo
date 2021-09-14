@@ -83,6 +83,9 @@ def data_handler(event):
             if 'value_active' in data:
                 register_measurement(conn, data)
 
+            if 'product' in data:
+                register_production(conn, data)
+
             else:
                 register_utility(conn, data)
 
@@ -241,6 +244,36 @@ def validate_data(event):
             validate(instance=event, schema=format)
 
             return True
+
+        if 'product' in  event:
+            format =  { "$schema": "http://json-schema.org/draft-04/schema#",
+                        "type": "object",
+                        "properties": {
+                            "capture_id": {
+                            "type": "string"
+                            },
+                            "datetime_read": {
+                            "type": "string",
+                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}$"
+                            },
+                            "value": {
+                            "type": "number"
+                            },
+                            "product":{
+                                "type":"string"
+                            }
+                        },
+                        "required": [
+                            "capture_id",
+                            "datetime_read",
+                            "value",
+                            "product"
+                        ]
+                    }
+
+            validate(instance=event, schema=format)
+
+            return True
         
         else:
             format =  { "$schema": "http://json-schema.org/draft-04/schema#",
@@ -334,7 +367,7 @@ def table_type(conn):
     except Exception as error:
         result = None
 
-        logger.error("result not found: {}".format(data['capture_id']))
+        logger.error("result not found")
 
     if 'true' in result:
         return True
@@ -398,6 +431,15 @@ def get_data(event):
                 'thd_current_b': event['thd_current_b'],
                 'thd_current_c': event['thd_current_c']   
             }
+        
+        if 'product' in event:
+            
+            data = {
+                'capture_id':event['capture_id'],
+                'datetime_read':event['datetime_read'],
+                'value':event['value'],
+                'product':event['product']
+            }
 
         else:
             data = {
@@ -446,6 +488,80 @@ def get_equipment(conn, data):
     return equipment
 
 
+def get_product(conn, data):
+    """
+    Get the product, corresponding to the message received.
+    @param conn: Connection with PostgreSql
+    @param data: Datas received.
+    @return: Product.
+    """
+    cur = conn.cursor()
+
+    try:
+        sql = (
+            "SELECT product_id "
+            "FROM product "
+            "WHERE id_capture = '{}'".format(data['capture_id'])
+        )
+        cur.execute(sql)
+        product = cur.fetchone()
+        cur.close()
+        if product is None:
+            raise Exception
+        product = product[0]
+        logger.info("Product obtained in PostgreSql.")
+
+    except Exception as error:
+        product = None
+
+        logger.error("Product: {} will be created".format(data['product']))
+
+    return product
+
+
+def create_product(conn, data):
+    """
+    Create the product, corresponding to the message received.
+    @param conn: Connection with PostgreSql
+    @param data: Datas received.
+    @return: Product.
+    """
+
+    cur = conn.cursor()
+
+    inserted = False
+
+    try:
+        sql = (
+            "INSERT INTO product ("
+            "name, "
+            "un, "
+            "id_capture) "
+            "VALUES "
+            "('{}','{}', '{}') "
+                .format(   
+                data['product'],
+                'ton',
+                data['capture_id'],
+            )
+        )
+        cur.execute(sql)
+        conn.commit()
+        cur.close()
+
+        rows = cur.rowcount
+
+        if rows:
+            inserted = True
+
+
+        logger.info("Product inserted in PostgreSql.")
+
+    except Exception as error:
+
+        logger.error("Product not inserted: {}".format(data['product']))
+
+    return inserted
 
 
 
@@ -695,3 +811,96 @@ def update_measurement(conn, data, equipment):
         logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
 
     return updated
+
+
+def register_production(conn, data):
+    """
+    Register production.
+    @param conn: Connection with PostgreSql.
+    @param data: Data to be inserted.
+    @return: True
+    """
+    product = get_product(conn, data)
+    if not product:
+        if create_product(conn, data):
+            product = get_product(conn, data)
+            if not update_production(conn, data, product):
+                insert_production(conn, data, product)
+    else:
+        if not update_production(conn, data, product):
+            insert_production(conn, data, product)
+    return True
+
+
+def update_production(conn, data, product):
+    """
+    Update production into PostgreSql.
+    @param conn: Connection with PostgreSql
+    @param data: Data to be updated.
+    @param equipment: Equipment of the Datas.
+    @return: Success or failure in the update.
+    """
+    sql = ''
+    try:
+        sql = (
+            "UPDATE "
+            "manufactured "
+            "SET "
+            "value = '{}' "
+            "WHERE "
+            "product_id = {} AND "
+            "datetime_read = '{}';".format(   
+                data['value'],
+                product,
+                data['datetime_read']
+            )
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+        if updated:
+            logger.info("Updated in PostgreSql - {}".format(updated))
+
+    except Exception as error:
+        updated = None
+        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
+
+    return updated   
+
+
+def insert_production(conn, data, product):
+    """
+    Insert datas into PostgreSql.
+    @param conn: Connection with PostgreSql
+    @param data: Data to be inserted
+    @param product: Product of the data.
+    @return: Success or fail in the insertion.
+    """
+    try:
+        sql = (
+            "INSERT INTO manufactured ("
+            "datetime_read, "
+            "value, "
+            "product_id) "
+            "VALUES "
+            "('{}','{}', '{}') "
+                .format(   
+                data['datetime_read'],
+                data['value'],
+                product,
+            )
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        conn.commit()
+        cur.close()
+        inserted = True
+        logger.info("Inserted in PostgreSql.")
+
+    except Exception as error:
+        inserted = False
+        logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
+
+    return inserted

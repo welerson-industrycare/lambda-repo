@@ -44,7 +44,7 @@ def lambda_handler(event, context):
 
         if len(failed_data) != 0:
             return {
-            'statusCode': 200,
+            'statusCode': 400,
             'body':json.dumps(failed_data, indent=2)
             }
 

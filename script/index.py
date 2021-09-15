@@ -165,7 +165,7 @@ def validate_data(event):
     """
 
     try:
-        if 'value_active' in event:
+        if 'value_active' in event or 'value_reactive' in event:
 
             format = {
                         "$schema": "http://json-schema.org/draft-04/schema#",
@@ -245,7 +245,7 @@ def validate_data(event):
 
             return True
 
-        if 'product' in  event:
+        if 'product' in  event or len(event) == 4:
             format =  { "$schema": "http://json-schema.org/draft-04/schema#",
                         "type": "object",
                         "properties": {

@@ -5,12 +5,14 @@ import logging
 import json
 import os
 import psycopg2
+import re
 
 # Logger settings CloudWatch
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 failed_data = []
+index = 0
 
 
 def lambda_handler(event, context):
@@ -53,7 +55,6 @@ def lambda_handler(event, context):
 
 
 
-
 def data_handler(event):
     """
     Initial proccess.
@@ -61,7 +62,12 @@ def data_handler(event):
     """
 
     print(event)
+
+    global index
     
+    event['index'] = index
+
+    index += 1
 
     SECRET_KEY = "EHu2wf3M0!qA9NEJmUQBpdG^34Z06"
 
@@ -74,7 +80,7 @@ def data_handler(event):
 
     logger.info("Received event: " + json.dumps(event, indent=2))
 
-    if validate_data(event):
+    if data_validate(event):
 
         data = get_data(event)
 
@@ -83,7 +89,7 @@ def data_handler(event):
             if 'value_active' in data:
                 register_measurement(conn, data)
 
-            if 'product' in data:
+            elif 'product' in data:
                 register_production(conn, data)
 
             else:
@@ -123,7 +129,6 @@ def measurement_to_utility(data):
 
 
 
-
 def get_company():
 
     conn = connect_postgres(0)
@@ -155,6 +160,224 @@ def get_company():
         logger.error("company not found: {}".format(company))
 
 
+
+def data_validate(event):
+
+    if 'value_active' in event or 'value_reactive' in event:
+        return measurement_validate(event)
+    elif 'product' in event or len(event) == 5:
+        return production_validate(event)
+    else:
+        return utility_validate(event)
+
+
+
+def utility_validate(event):
+
+    errors = {}
+
+    list_keys = [
+        "index",
+        "capture_id",
+        "datetime_read",
+        "value"
+    ]
+
+    if 'capture_id' in event and  type(event['capture_id']) is not str:
+        capture_id = event['capture_id']
+        errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
+
+    if 'datetime_read' in event:
+
+        date = event['datetime_read']
+
+        if type(date) == str:
+            
+            regex = re.search('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', date)
+            
+            if regex is None:
+                errors['datetime_read'] = f'A data {date} está fora do padrão ISO 8601 2020-01-03T00:00:00-03:00'
+
+        else:
+            errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
+
+    if 'value' in event and type(event['value']) is not float:
+        value = event['value']
+
+        errors['value'] = f"'{value}' não é do tipo 'number'"
+    
+    event_keys = [ k for k in event.keys()]
+
+    invalid_keys = [ k for k in event.keys() if k not in list_keys ]
+
+    forgotten_keys = [ k for k in list_keys if k not in event_keys ]
+
+    if invalid_keys: 
+        for i in invalid_keys:
+            errors[i] = 'Chave fora do padrão'
+
+    if forgotten_keys:
+        for f in forgotten_keys:
+            errors[f] = 'Chave não encontrada'
+
+    if errors:
+        errors['index'] = event['index']
+
+        failed_data.append(errors)
+
+        return False
+
+    return True
+
+
+
+def production_validate(event):
+
+    errors = {}
+
+    list_keys = [
+        "index",
+        "capture_id",
+        "datetime_read",
+        "value",
+        "product"
+    ]
+
+    if 'capture_id' in event:
+        if type(event['capture_id']) is not str:
+            capture_id = event['capture_id']
+            errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
+        else:
+            capture_id = event['capture_id']
+            regex = re.search(r'^([\d]+)_([\d]+)_([\d]+)$', capture_id)
+            if not regex:
+                errors['capture_id'] = f'{capture_id} não possui formato padrão para o campo (COD-UNIDADE_COD-LINHA_COD-PRODUTO)'
+
+
+    if 'datetime_read' in event:
+
+        date = event['datetime_read']
+
+        if type(date) == str:
+            
+            regex = re.search('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', date)
+            
+            if regex is None:
+                errors['datetime_read'] = f'A data {date} está fora do padrão ISO 8601 2020-01-03T00:00:00-03:00'
+
+        else:
+            errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
+
+    if 'value' in event and type(event['value']) is not float:
+        value = event['value']
+        errors['value'] = f"'{value}' não é do tipo 'number'"
+
+    if 'product' in event and type(event['product']) is not str:
+        product = event['product']
+        errors['product'] = f"'{product}' não é do tipo 'string'"
+    
+
+    event_keys = [ k for k in event.keys()]
+
+    invalid_keys = [ k for k in event.keys() if k not in list_keys ]
+
+    forgotten_keys = [ k for k in list_keys if k not in event_keys ]
+
+    if invalid_keys: 
+        for i in invalid_keys:
+            errors[i] = 'Chave fora do padrão'
+
+    if forgotten_keys:
+        for f in forgotten_keys:
+            errors[f] = 'Chave não encontrada'
+
+    if errors:
+        errors['index'] = event['index']
+
+        failed_data.append(errors)
+
+        return False
+
+    return True
+
+
+
+def measurement_validate(event):
+
+    errors = {}
+
+    list_keys = [   
+        "index",     
+        "capture_id",
+        "datetime_read",
+        "value_active",
+        "value_reactive",
+        "tension_phase_neutral_a",
+        "tension_phase_neutral_b",
+        "tension_phase_neutral_c",
+        "current_a",
+        "current_b",
+        "current_c",
+        "thd_tension_a",
+        "thd_tension_b",
+        "thd_tension_c",
+        "thd_current_a",
+        "thd_current_b",
+        "thd_current_c"
+    ]
+
+    if 'capture_id' in event and type(event['capture_id']) is not str:
+
+        capture_id = event['capture_id']
+
+        errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
+
+
+    if 'datetime_read' in event:
+
+        date = event['datetime_read']
+
+        if type(date) == str:
+            
+            regex = re.search('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', date)
+            
+            if regex is None:
+                errors['datetime_read'] = f'A data {date} está fora do padrão ISO 8601 2020-01-03T00:00:00-03:00'
+
+        else:
+            errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
+
+
+    event_keys = [ k for k in event.keys()]
+
+    invalid_keys = [ k for k in event.keys() if k not in list_keys ]
+
+    forgotten_keys = [ k for k in list_keys if k not in event_keys ]
+
+    values_keys = [ k for k in list_keys if k in event_keys and k not in ['capture_id', 'datetime_read', 'index']]
+
+
+    for v in values_keys:
+        value = event[v]
+        if type(value) is not float:
+            errors[v] = f"'{value}' não é do tipo 'number'"
+
+    if invalid_keys: 
+        for i in invalid_keys:
+            errors[i] = 'Chave fora do padrão'
+
+    if forgotten_keys:
+        for f in forgotten_keys:
+            errors[f] = 'Chave não encontrada'
+    
+    if errors:
+        errors['index'] = event['index']
+
+        failed_data.append(errors)
+
+        return False
+
+    return True
 
 
 
@@ -312,8 +535,6 @@ def validate_data(event):
 
 
 
-
-
 def connect_postgres(data):
     """
     Establish connect with PostgreSql
@@ -336,6 +557,8 @@ def connect_postgres(data):
         logger.error("Connecting with Postgres: ", error)
 
     return conn 
+
+
 
 def table_type(conn):
     """
@@ -377,7 +600,6 @@ def table_type(conn):
 
 
 
-
 def set_period(event):
     """
     Set the period what stands for the number of intervals of 15 minutes between the datetime_read and the initial date of the month
@@ -398,6 +620,8 @@ def set_period(event):
 
     return period
 
+
+
 def get_data(event):
     """
     Extract the data from the message received.
@@ -412,6 +636,7 @@ def get_data(event):
             period = set_period(event)
             
             data = {
+                'index':event['index'],
                 'capture_id': event['capture_id'],
                 'datetime_register': datetime.now().isoformat(),
                 'datetime_read': event['datetime_read'],
@@ -432,9 +657,10 @@ def get_data(event):
                 'thd_current_c': event['thd_current_c']   
             }
         
-        if 'product' in event:
+        elif 'product' in event:
             
             data = {
+                'index':event['index'],
                 'capture_id':event['capture_id'],
                 'datetime_read':event['datetime_read'],
                 'value':event['value'],
@@ -443,6 +669,7 @@ def get_data(event):
 
         else:
             data = {
+            'index':event['index'],
             'capture_id': event['capture_id'],
             'datetime_register': datetime.now().isoformat(),
             'datetime_read': event['datetime_read'],
@@ -476,7 +703,14 @@ def get_equipment(conn, data):
         equipment = cur.fetchone()
         cur.close()
         if equipment is None:
-            raise Exception
+            capture_id = data['capture_id']
+            failed_data.append({
+                'index':data['index'],
+                'capture_id': f"'{capture_id}' medidor não encontrado"
+            })
+
+            return None
+
         equipment = equipment[0]
         logger.info("Equipment obtained in PostgreSql.")
 
@@ -486,6 +720,7 @@ def get_equipment(conn, data):
         logger.error("Equipment not found: {}".format(data['capture_id']))
 
     return equipment
+
 
 
 def get_product(conn, data):
@@ -517,6 +752,7 @@ def get_product(conn, data):
         logger.error("Product: {} will be created".format(data['product']))
 
     return product
+
 
 
 def create_product(conn, data):
@@ -604,7 +840,6 @@ def insert_utility(conn, data, plant_equipment_id):
 
 
 
-
 def insert_measurement(conn, data, plant_equipment_id):
     """
     Insert datas into PostgreSql.
@@ -673,6 +908,7 @@ def insert_measurement(conn, data, plant_equipment_id):
     return inserted
 
 
+
 def register_utility(conn, data):
     """
     Register utility.
@@ -686,6 +922,8 @@ def register_utility(conn, data):
             insert_utility(conn, data, equipment)
     return True
 
+
+
 def register_measurement(conn, data):
     """
     Register measurement.
@@ -698,7 +936,6 @@ def register_measurement(conn, data):
         if not update_measurement(conn, data, equipment):
             insert_measurement(conn, data, equipment)
     return True
-
 
 
 
@@ -740,7 +977,6 @@ def update_utility(conn, data, equipment):
         logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
 
     return updated   
-
 
 
 
@@ -813,6 +1049,7 @@ def update_measurement(conn, data, equipment):
     return updated
 
 
+
 def register_production(conn, data):
     """
     Register production.
@@ -830,6 +1067,7 @@ def register_production(conn, data):
         if not update_production(conn, data, product):
             insert_production(conn, data, product)
     return True
+
 
 
 def update_production(conn, data, product):
@@ -870,6 +1108,7 @@ def update_production(conn, data, product):
     return updated   
 
 
+
 def insert_production(conn, data, product):
     """
     Insert datas into PostgreSql.
@@ -904,3 +1143,6 @@ def insert_production(conn, data, product):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
     return inserted
+
+
+    

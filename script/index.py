@@ -92,6 +92,9 @@ def data_handler(event):
             elif 'product' in data:
                 register_production(conn, data)
 
+            elif 'p_value' in data:
+                register_processes(conn, data)
+
             else:
                 register_utility(conn, data)
 
@@ -167,6 +170,8 @@ def data_validate(event):
         return measurement_validate(event)
     elif 'product' in event or len(event) == 5:
         return production_validate(event)
+    elif 'p_value' in event:
+        return processes_validate(event)
     else:
         return utility_validate(event)
 
@@ -229,6 +234,64 @@ def utility_validate(event):
 
     return True
 
+
+
+def processes_validate(event):
+
+    errors = {}
+
+    list_keys = [
+        "index",
+        "capture_id",
+        "datetime_read",
+        "p_value"
+    ]
+
+    if 'capture_id' in event and  type(event['capture_id']) is not str:
+        capture_id = event['capture_id']
+        errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
+
+    if 'datetime_read' in event:
+
+        date = event['datetime_read']
+
+        if type(date) == str:
+            
+            regex = re.search('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', date)
+            
+            if regex is None:
+                errors['datetime_read'] = f'A data {date} está fora do padrão ISO 8601 2020-01-03T00:00:00-03:00'
+
+        else:
+            errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
+
+    if 'value' in event and type(event['value']) is not float:
+        value = event['p_value']
+
+        errors['p_value'] = f"'{value}' não é do tipo 'number'"
+    
+    event_keys = [ k for k in event.keys()]
+
+    invalid_keys = [ k for k in event.keys() if k not in list_keys ]
+
+    forgotten_keys = [ k for k in list_keys if k not in event_keys ]
+
+    if invalid_keys: 
+        for i in invalid_keys:
+            errors[i] = 'Chave fora do padrão'
+
+    if forgotten_keys:
+        for f in forgotten_keys:
+            errors[f] = 'Chave não encontrada'
+
+    if errors:
+        errors['index'] = event['index']
+
+        failed_data.append(errors)
+
+        return False
+
+    return True
 
 
 def production_validate(event):
@@ -667,13 +730,23 @@ def get_data(event):
                 'product':event['product']
             }
 
+        elif 'p_value' in event:
+
+            data = {
+                'index':event['index'],
+                'capture_id': event['capture_id'],
+                'datetime_register': datetime.now().isoformat(),
+                'datetime_read': event['datetime_read'],
+                'p_value': event['p_value']
+            }
+
         else:
             data = {
-            'index':event['index'],
-            'capture_id': event['capture_id'],
-            'datetime_register': datetime.now().isoformat(),
-            'datetime_read': event['datetime_read'],
-            'value': event['value']
+                'index':event['index'],
+                'capture_id': event['capture_id'],
+                'datetime_register': datetime.now().isoformat(),
+                'datetime_read': event['datetime_read'],
+                'value': event['value']
             }
 
     except Exception as error:
@@ -839,6 +912,43 @@ def insert_utility(conn, data, plant_equipment_id):
     return inserted
 
 
+def insert_processes(conn, data, plant_equipment_id):
+    """
+    Insert datas into PostgreSql.
+    @param conn: Connection with PostgreSql
+    @param data: Data to be inserted
+    @param equipment: Equipment of the datas.
+    @return: Success or fail in the insertion.
+    """
+    try:
+        sql = (
+            "INSERT INTO processes ("
+            "datetime_register, "
+            "datetime_read, "
+            "p_value, "
+            "plant_equipment_id) "
+            "VALUES "
+            "('{}','{}', '{}', '{}') "
+                .format(   
+                data['datetime_register'],
+                data['datetime_read'],
+                data['p_value'],
+                plant_equipment_id,
+            )
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        conn.commit()
+        cur.close()
+        inserted = True
+        logger.info("Inserted in PostgreSql.")
+
+    except Exception as error:
+        inserted = False
+        logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
+
+    return inserted
+
 
 def insert_measurement(conn, data, plant_equipment_id):
     """
@@ -923,6 +1033,19 @@ def register_utility(conn, data):
     return True
 
 
+def register_processes(conn, data):
+    """
+    Register utility.
+    @param conn: Connection with PostgreSql.
+    @param data: Data to be inserted.
+    @return: True
+    """
+    equipment = get_equipment(conn, data)
+    if equipment:
+        if not update_processes(conn, data, equipment):
+            insert_processes(conn, data, equipment)
+    return True
+
 
 def register_measurement(conn, data):
     """
@@ -978,6 +1101,45 @@ def update_utility(conn, data, equipment):
 
     return updated   
 
+
+def update_processes(conn, data, equipment):
+    """
+    Update processes into PostgreSql.
+    @param conn: Connection with PostgreSql
+    @param data: Data to be updated.
+    @param equipment: Equipment of the Datas.
+    @return: Success or failure in the update.
+    """
+    sql = ''
+    try:
+        sql = (
+            "UPDATE "
+            "processes "
+            "SET "
+            "datetime_register = '{}', "
+            "p_value = '{}' "
+            "WHERE "
+            "plant_equipment_id = {} AND "
+            "datetime_read = '{}';".format(   
+                data['datetime_register'],
+                data['p_value'],
+                equipment,
+                data['datetime_read']
+            )
+        )
+        cur = conn.cursor()
+        cur.execute(sql)
+        updated = cur.rowcount
+        conn.commit()
+        cur.close()
+        if updated:
+            logger.info("Updated in PostgreSql - {}".format(updated))
+
+    except Exception as error:
+        updated = None
+        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
+
+    return updated   
 
 
 def update_measurement(conn, data, equipment):

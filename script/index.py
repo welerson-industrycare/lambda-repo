@@ -95,6 +95,9 @@ def data_handler(event):
             elif 'p_value' in data:
                 register_processes(conn, data)
 
+            elif 'f_value' in data:
+                register_filter_table(conn, data)
+
             else:
                 register_utility(conn, data)
 
@@ -166,7 +169,11 @@ def get_company():
 
 def data_validate(event):
 
-    if 'value_active' in event or 'value_reactive' in event:
+    capture_ids = get_tables_capture_id()
+
+    if 'capture_id' in event and event['capture_id'] in capture_ids:
+        return static_validate(event)  
+    elif 'value_active' in event or 'value_reactive' in event:
         return measurement_validate(event)
     elif 'product' in event or len(event) == 5:
         return production_validate(event)
@@ -174,6 +181,95 @@ def data_validate(event):
         return processes_validate(event)
     else:
         return utility_validate(event)
+
+
+def get_col_type():
+
+    cols = get_table_columns()
+
+    col_types = {}
+
+    for c in cols:
+        for i in cols[c]:
+            col_types[i] = cols[c][i]['type']
+
+    return col_types
+
+
+def get_table(capture_id):
+
+    cols = get_table_columns()
+
+    for c in cols:
+        if capture_id in cols[c].keys():
+            return c
+
+    return ''
+
+
+def static_validate(event):
+
+    errors = {}
+
+    col_type = get_col_type()
+
+    list_keys = [
+        "index",
+        "capture_id",
+        "datetime_read",
+        "f_value"
+    ]
+
+    if 'capture_id' in event and  type(event['capture_id']) is not str:
+        capture_id = event['capture_id']
+        errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
+
+    if 'datetime_read' in event:
+
+        date = event['datetime_read']
+
+        if type(date) == str:
+            
+            regex = re.search('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}', date)
+            
+            if regex is None:
+                errors['datetime_read'] = f'A data {date} está fora do padrão ISO 8601 2020-01-03T00:00:00-03:00'
+
+        else:
+            errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
+
+    if 'capture_id' in event:
+        if 'f_value' in event: 
+            if col_type[event['capture_id']] == 'text' and type(event['f_value']) is not str:
+                value = event['f_value']
+                errors['f_value'] = f"'{value}' não é do tipo 'string'"
+            elif col_type[event['capture_id']] == 'float' and type(event['f_value']) is not float:
+                value = event['f_value']
+                errors['f_value'] = f"'{value}' não é do tipo 'float'"                    
+
+    
+    event_keys = [ k for k in event.keys()]
+
+    invalid_keys = [ k for k in event.keys() if k not in list_keys ]
+
+    forgotten_keys = [ k for k in list_keys if k not in event_keys ]
+
+    if invalid_keys: 
+        for i in invalid_keys:
+            errors[i] = 'Chave fora do padrão'
+
+    if forgotten_keys:
+        for f in forgotten_keys:
+            errors[f] = 'Chave não encontrada'
+
+    if errors:
+        errors['index'] = event['index']
+
+        failed_data.append(errors)
+
+        return False
+
+    return True
 
 
 
@@ -234,7 +330,60 @@ def utility_validate(event):
 
     return True
 
+def get_table_columns():
 
+    conn = None
+
+    sql = """
+        SELECT 
+            value
+        FROM
+            system_config
+        WHERE
+            key = 'staticTable'
+    """
+
+    try:
+        conn = connect_postgres(0)
+
+        cur = conn.cursor()
+
+        cur.execute(sql)
+
+        data = cur.fetchone()
+
+        data = json.loads(data[0])
+
+        cols = {}
+        
+
+        for d in data:
+            columns = {}
+            for i in data[d]: 
+                tmp = {}
+                tmp['column'] = i
+                tmp['type'] = data[d][i]['type']
+                columns[data[d][i]['capture_id']] = tmp
+            cols[d] = columns
+            
+    except Exception as error:
+        print(error)
+    finally:
+            if conn is not None:
+                conn.close()
+                return cols
+
+def get_tables_capture_id():
+
+    cols = get_table_columns()
+
+    capture_ids = []
+
+    for c in cols:
+        for i in cols[c]:
+            capture_ids.append(i)
+
+    return capture_ids
 
 def processes_validate(event):
 
@@ -740,6 +889,15 @@ def get_data(event):
                 'p_value': event['p_value']
             }
 
+        elif 'f_value' in event:
+
+            data = {
+                'index':event['index'],
+                'capture_id': event['capture_id'],
+                'datetime_read': event['datetime_read'],
+                'f_value': event['f_value']
+            }            
+
         else:
             data = {
                 'index':event['index'],
@@ -1018,6 +1176,107 @@ def insert_measurement(conn, data, plant_equipment_id):
     return inserted
 
 
+def insert_processes_filters(conn, data):
+
+    cols = get_table_columns()
+    capture_id = data['capture_id']
+    column = cols['processes'][capture_id]['column']
+
+    try:
+        sql = """
+            INSERT INTO public.processes_filters(
+                datetime_read, {0})
+                VALUES (%(datetime_read)s, %(f_value)s)
+            ON CONFLICT ON CONSTRAINT processes_filters_pkey
+            DO
+                UPDATE SET {0} = %(f_value)s;
+        """.format(column)
+
+        conn = connect_postgres(0)
+        cur = conn.cursor()
+        cur.execute(sql, data)
+        conn.commit()
+        cur.close()
+        inserted = True
+        logger.info("Inserted in PostgreSql.")
+        
+    except Exception as error:
+        inserted = False
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
+
+
+
+def insert_utility_filters(conn, data):
+
+    cols = get_table_columns()
+    capture_id = data['capture_id']
+    column = cols['utility'][capture_id]['column']
+
+    try:
+        sql = """
+            INSERT INTO public.utility_filters(
+                datetime_read, {0})
+                VALUES (%(datetime_read)s, %(f_value)s)
+            ON CONFLICT ON CONSTRAINT utility_filters_pkey
+            DO
+                UPDATE SET {0} = %(f_value)s;
+        """.format(column)
+
+        conn = connect_postgres(0)
+        cur = conn.cursor()
+        cur.execute(sql, data)
+        conn.commit()
+        cur.close()
+        inserted = True
+        logger.info("Inserted in PostgreSql.")
+        
+    except Exception as error:
+        inserted = False
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
+
+
+
+def insert_measurement_filters(conn, data):
+
+    cols = get_table_columns()
+    capture_id = data['capture_id']
+    column = cols['measurement'][capture_id]['column']
+
+    try:
+        sql = """
+            INSERT INTO public.measurement_filters(
+                datetime_read, {0})
+                VALUES (%(datetime_read)s, %(f_value)s)
+            ON CONFLICT ON CONSTRAINT measurement_filters_pkey
+            DO
+                UPDATE SET {0} = %(f_value)s;
+        """.format(column)
+
+        conn = connect_postgres(0)
+        cur = conn.cursor()
+        cur.execute(sql, data)
+        conn.commit()
+        cur.close()
+        inserted = True
+        logger.info("Inserted in PostgreSql.")
+        
+    except Exception as error:
+        inserted = False
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
+
+
 
 def register_utility(conn, data):
     """
@@ -1045,6 +1304,20 @@ def register_processes(conn, data):
         if not update_processes(conn, data, equipment):
             insert_processes(conn, data, equipment)
     return True
+
+
+def register_filter_table(conn, data):
+
+    table = get_table(data['capture_id'])
+
+    if table == 'processes':
+        insert_processes_filters(conn, data)
+    elif table == 'utility':
+        insert_utility_filters(conn, data)
+    elif table == 'measurement':
+        insert_measurement_filters(conn, data)    
+    else:
+         logger.info('Table not found')
 
 
 def register_measurement(conn, data):
@@ -1305,6 +1578,5 @@ def insert_production(conn, data, product):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
     return inserted
-
 
     

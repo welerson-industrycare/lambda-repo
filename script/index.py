@@ -1031,6 +1031,66 @@ def create_product(conn, data):
     return inserted
 
 
+def check_filter(date):
+
+    conn = None 
+
+    row = 0
+
+    try:
+        conn = connect_postgres(0)
+
+        sql = f"""
+            SELECT datetime_read
+            FROM processes_filters
+            WHERE datetime_read = '{date}' 
+        """
+
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.rowcount
+        cur.close()
+
+    except Exception as error:
+        print(error)
+
+    finally:
+        if conn is not None:
+            conn.close()
+            return row
+
+
+def insert_filter(date):
+
+    conn = None 
+
+    inserted = 0
+
+    try:
+        conn = connect_postgres(0)
+
+        sql = f"""
+            INSERT INTO processes_filters(datetime_read)
+            VALUES ('{date}') 
+        """
+
+        cur = conn.cursor()
+        cur.execute(sql)
+        inserted = cur.rowcount
+        conn.commit()
+        cur.close()
+
+    except Exception as error:
+        print(error)
+
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
+    
+
+
+
 
 def insert_utility(conn, data, plant_equipment_id):
     """
@@ -1301,6 +1361,11 @@ def register_processes(conn, data):
     """
     equipment = get_equipment(conn, data)
     if equipment:
+        date = data['datetime_read']
+        filter = check_filter(date)
+
+        if filter == 0:
+            insert_filter(date)
         if not update_processes(conn, data, equipment):
             insert_processes(conn, data, equipment)
     return True

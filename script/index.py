@@ -1042,7 +1042,7 @@ def check_filter(date):
 
         sql = f"""
             SELECT datetime_read
-            FROM processes_filters
+            FROM filter_processes
             WHERE datetime_read = '{date}' 
         """
 
@@ -1070,7 +1070,7 @@ def insert_filter(date):
         conn = connect_postgres(0)
 
         sql = f"""
-            INSERT INTO processes_filters(datetime_read)
+            INSERT INTO filter_processes(datetime_read)
             VALUES ('{date}') 
         """
 
@@ -1244,7 +1244,7 @@ def insert_processes_filters(conn, data):
 
     try:
         sql = """
-            INSERT INTO public.processes_filters(
+            INSERT INTO public.filter_processes(
                 datetime_read, {0})
                 VALUES (%(datetime_read)s, %(f_value)s)
             ON CONFLICT ON CONSTRAINT processes_filters_pkey
@@ -1278,7 +1278,7 @@ def insert_utility_filters(conn, data):
 
     try:
         sql = """
-            INSERT INTO public.utility_filters(
+            INSERT INTO public.filter_utility(
                 datetime_read, {0})
                 VALUES (%(datetime_read)s, %(f_value)s)
             ON CONFLICT ON CONSTRAINT utility_filters_pkey
@@ -1312,7 +1312,7 @@ def insert_measurement_filters(conn, data):
 
     try:
         sql = """
-            INSERT INTO public.measurement_filters(
+            INSERT INTO public.filter_measurement(
                 datetime_read, {0})
                 VALUES (%(datetime_read)s, %(f_value)s)
             ON CONFLICT ON CONSTRAINT measurement_filters_pkey

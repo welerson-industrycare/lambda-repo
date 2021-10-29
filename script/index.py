@@ -11,7 +11,7 @@ import re
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-failed_data = []
+
 index = 0
 
 
@@ -22,10 +22,10 @@ def lambda_handler(event, context):
     """
 
     try:
-
+        list_erros = []
         conn = connect_postgres(0)
         result = table_type(conn)
-
+        count = 0
         if result:
 
             for e in event:
@@ -33,21 +33,28 @@ def lambda_handler(event, context):
                     data = measurement_to_utility(e)
 
                     for d in data:
-                        data_handler(d)
-
+                        response = data_handler(d, count)
+                        count += 1
+                        if 'statusCode' not in  response:
+                            list_erros.append(response) 
                 
                 else:
-                    data_handler(e)
-
+                    response = data_handler(d, count)
+                    count += 1
+                    if 'statusCode' not in  response:
+                        list_erros.append(response) 
         else:
             for e in event:
-                data_handler(e)
+               response = data_handler(e, count)
+               count += 1
+               if 'statusCode' not in  response:
+                   list_erros.append(response) 
 
 
-        if len(failed_data) != 0:
+        if len(list_erros) != 0:
             return {
             'statusCode': 400,
-            'body':json.dumps(failed_data, indent=2)
+            'body':json.dumps(list_erros, indent=2)
             }
 
     except Exception as e:
@@ -55,7 +62,7 @@ def lambda_handler(event, context):
 
 
 
-def data_handler(event):
+def data_handler(event, count):
     """
     Initial proccess.
     @param event: Message received.
@@ -63,11 +70,9 @@ def data_handler(event):
 
     print(event)
 
-    global index
     
-    event['index'] = index
+    event['index'] = count
 
-    index += 1
 
     SECRET_KEY = "EHu2wf3M0!qA9NEJmUQBpdG^34Z06"
 
@@ -80,7 +85,9 @@ def data_handler(event):
 
     logger.info("Received event: " + json.dumps(event, indent=2))
 
-    if data_validate(event):
+    event_validate = data_validate(event)
+
+    if event_validate == True:
 
         data = get_data(event)
 
@@ -100,7 +107,7 @@ def data_handler(event):
 
             else:
                 register_utility(conn, data)
-
+    
 
         logger.info("End Function")
 
@@ -109,6 +116,8 @@ def data_handler(event):
             'body':json.dumps('ok')
         }
 
+    else:
+        return event_validate
 
 
 def measurement_to_utility(data):
@@ -265,9 +274,8 @@ def static_validate(event):
     if errors:
         errors['index'] = event['index']
 
-        failed_data.append(errors)
+        return errors
 
-        return False
 
     return True
 
@@ -324,9 +332,8 @@ def utility_validate(event):
     if errors:
         errors['index'] = event['index']
 
-        failed_data.append(errors)
+        return errors
 
-        return False
 
     return True
 
@@ -436,9 +443,8 @@ def processes_validate(event):
     if errors:
         errors['index'] = event['index']
 
-        failed_data.append(errors)
+        return errors
 
-        return False
 
     return True
 
@@ -506,9 +512,7 @@ def production_validate(event):
     if errors:
         errors['index'] = event['index']
 
-        failed_data.append(errors)
-
-        return False
+        return errors
 
     return True
 
@@ -571,7 +575,7 @@ def measurement_validate(event):
 
     for v in values_keys:
         value = event[v]
-        if type(value) is not float:
+        if type(value) is not float and type(value) is not int:
             errors[v] = f"'{value}' não é do tipo 'number'"
 
     if invalid_keys: 
@@ -585,9 +589,7 @@ def measurement_validate(event):
     if errors:
         errors['index'] = event['index']
 
-        failed_data.append(errors)
-
-        return False
+        return errors
 
     return True
 
@@ -741,9 +743,9 @@ def validate_data(event):
     except ValidationError as e:
         event['error'] = str(e).split('Failed')[0]
         event['error'] = event['error'].replace('\n', '')
-        failed_data.append(event)
+
         logging.exception("Exception occurred")
-        return False  
+
 
 
 

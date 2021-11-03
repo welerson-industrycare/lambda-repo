@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import final
 from jsonschema import validate, ValidationError
 from jsonschema.validators import validator_for
 import logging
@@ -23,7 +24,14 @@ def lambda_handler(event, context):
 
     try:
         list_erros = []
-        conn = connect_postgres(0)
+        measurement = []
+        processes = []
+        utility = []
+        manufactured = []
+        filter_processes = []
+        filter_utility = []
+        filter_measurement = []
+        conn = connect_postgres()
         result = table_type(conn)
         count = 0
         if result:
@@ -35,23 +43,83 @@ def lambda_handler(event, context):
                     for d in data:
                         response = data_handler(d, count)
                         count += 1
-                        if 'statusCode' not in  response:
+                        if 'table' not in  response:
                             list_erros.append(response) 
+                        else:
+                            table = response['table']
+                            if table == 'utility':
+                                utility.append(response)
+                            elif table == 'processes':
+                                processes.append(response)
+                            elif table == 'manufactured':
+                                manufactured.append(response)
+                            elif table == 'filter_processes':
+                                filter_processes.append(response) 
+                            elif table == 'filter_utility':
+                                filter_utility.append(response)
+                            else:
+                                filter_measurement.append(response)
+
                 
                 else:
                     response = data_handler(d, count)
                     count += 1
-                    if 'statusCode' not in  response:
-                        list_erros.append(response) 
+                    if 'table' not in  response:
+                        list_erros.append(response)
+                    else:
+                        table = response['table']
+                        if table == 'utility':
+                            utility.append(response)
+                        elif table == 'processes':
+                            processes.append(response)
+                        elif table == 'manufactured':
+                            manufactured.append(response)
+                        elif table == 'filter_processes':
+                            filter_processes.append(response) 
+                        elif table == 'filter_utility':
+                            filter_utility.append(response)
+                        else:
+                            filter_measurement.append(response)
         else:
             for e in event:
                response = data_handler(e, count)
                count += 1
-               if 'statusCode' not in  response:
-                   list_erros.append(response) 
+               if 'table' not in  response:
+                   list_erros.append(response)
+               else:
+                   table = response['table']
+                   if table == 'measurement':
+                       measurement.append(response)
+                   elif table == 'utility':
+                       utility.append(response)
+                   elif table == 'processes':
+                       processes.append(response)
+                   elif table == 'manufactured':
+                       manufactured.append(response)
+                   elif table == 'filter_processes':
+                       filter_processes.append(response) 
+                   elif table == 'filter_utility':
+                       filter_utility.append(response)
+                   else:
+                       filter_measurement.append(response)
+
+        if measurement:
+            insert_measurement(measurement)
+        if utility:
+            insert_utility(utility)
+        if processes:
+            insert_processes(processes)
+        if manufactured:
+            insert_production(manufactured)
+        if filter_processes:
+            insert_processes_filters(filter_processes)
+        if filter_utility:
+            insert_utility_filters(filter_utility)
+        if filter_measurement:
+            insert_measurement_filters(filter_measurement)
 
 
-        if len(list_erros) != 0:
+        if list_erros:
             return {
             'statusCode': 400,
             'body':json.dumps(list_erros, indent=2)
@@ -89,32 +157,9 @@ def data_handler(event, count):
 
     if event_validate == True:
 
-        data = get_data(event)
+        data = get_data(event, count)
 
-        conn = connect_postgres(data)
-        if conn:
-            if 'value_active' in data:
-                register_measurement(conn, data)
-
-            elif 'product' in data:
-                register_production(conn, data)
-
-            elif 'p_value' in data:
-                register_processes(conn, data)
-
-            elif 'f_value' in data:
-                register_filter_table(conn, data)
-
-            else:
-                register_utility(conn, data)
-    
-
-        logger.info("End Function")
-
-        return {
-            'statusCode': 200,
-            'body':json.dumps('ok')
-        }
+        return data
 
     else:
         return event_validate
@@ -146,7 +191,7 @@ def measurement_to_utility(data):
 
 def get_company():
 
-    conn = connect_postgres(0)
+    conn = connect_postgres()
 
     cur = conn.cursor()
 
@@ -351,7 +396,7 @@ def get_table_columns():
     """
 
     try:
-        conn = connect_postgres(0)
+        conn = connect_postgres()
 
         cur = conn.cursor()
 
@@ -595,161 +640,9 @@ def measurement_validate(event):
 
 
 
-def validate_data(event):
-    """
-    Validate the received data
-    @param event: Message received
-    """
-
-    try:
-        if 'value_active' in event or 'value_reactive' in event:
-
-            format = {
-                        "$schema": "http://json-schema.org/draft-04/schema#",
-                        "type": "object",
-                        "properties": {
-                            "capture_id": {
-                            "type": "string"
-                            },
-                            "datetime_read": {
-                            "type": "string",
-                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}$"
-                            },
-                            "value_active": {
-                            "type": "number"
-                            },
-                            "value_reactive": {
-                            "type": "number"
-                            },
-                            "tension_phase_neutral_a": {
-                            "type": "number"
-                            },
-                            "tension_phase_neutral_b": {
-                            "type": "number"
-                            },
-                            "tension_phase_neutral_c": {
-                            "type": "number"
-                            },
-                            "current_a": {
-                            "type": "number"
-                            },
-                            "current_b": {
-                            "type": "number"
-                            },
-                            "current_c": {
-                            "type": "number"
-                            },
-                            "thd_tension_a": {
-                            "type": "number"
-                            },
-                            "thd_tension_b": {
-                            "type": "number"
-                            },
-                            "thd_tension_c": {
-                            "type": "number"
-                            },
-                            "thd_current_a": {
-                            "type": "number"
-                            },
-                            "thd_current_b": {
-                            "type": "number"
-                            },
-                            "thd_current_c": {
-                            "type": "number"
-                            }
-                        },
-                        "required": [
-                            "capture_id",
-                            "datetime_read",
-                            "value_active",
-                            "value_reactive",
-                            "tension_phase_neutral_a",
-                            "tension_phase_neutral_b",
-                            "tension_phase_neutral_c",
-                            "current_a",
-                            "current_b",
-                            "current_c",
-                            "thd_tension_a",
-                            "thd_tension_b",
-                            "thd_tension_c",
-                            "thd_current_a",
-                            "thd_current_b",
-                            "thd_current_c"
-                        ]
-                    }
-            
-            validate(instance=event, schema=format)
-
-            return True
-
-        if 'product' in  event or len(event) == 4:
-            format =  { "$schema": "http://json-schema.org/draft-04/schema#",
-                        "type": "object",
-                        "properties": {
-                            "capture_id": {
-                            "type": "string"
-                            },
-                            "datetime_read": {
-                            "type": "string",
-                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}$"
-                            },
-                            "value": {
-                            "type": "number"
-                            },
-                            "product":{
-                                "type":"string"
-                            }
-                        },
-                        "required": [
-                            "capture_id",
-                            "datetime_read",
-                            "value",
-                            "product"
-                        ]
-                    }
-
-            validate(instance=event, schema=format)
-
-            return True
-        
-        else:
-            format =  { "$schema": "http://json-schema.org/draft-04/schema#",
-                        "type": "object",
-                        "properties": {
-                            "capture_id": {
-                            "type": "string"
-                            },
-                            "datetime_read": {
-                            "type": "string",
-                            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}-[0-9]{2}:[0-9]{2}$"
-                            },
-                            "value": {
-                            "type": "number"
-                            }
-                        },
-                        "required": [
-                            "capture_id",
-                            "datetime_read",
-                            "value"
-                        ]
-                    }
-            
-            validate(instance=event, schema=format)
-
-            return True
 
 
-
-    except ValidationError as e:
-        event['error'] = str(e).split('Failed')[0]
-        event['error'] = event['error'].replace('\n', '')
-
-        logging.exception("Exception occurred")
-
-
-
-
-def connect_postgres(data):
+def connect_postgres():
     """
     Establish connect with PostgreSql
     @param data: Message received
@@ -836,78 +729,129 @@ def set_period(event):
 
 
 
-def get_data(event):
+def get_data(event, count):
     """
     Extract the data from the message received.
     @param event: Message received.
     @return: Dictionary with datas.
     """
+    error = {}
+    equipment = None
+    table = None
     try:
-
-        if 'value_active' in event:
-        # Datetime register is the current datetime.
-
-            period = set_period(event)
-            
-            data = {
-                'index':event['index'],
-                'capture_id': event['capture_id'],
-                'datetime_register': datetime.now().isoformat(),
-                'datetime_read': event['datetime_read'],
-                'value_active': event['value_active'],
-                'value_reactive': event['value_reactive'],
-                'period': period,
-                'tension_phase_neutral_a': event['tension_phase_neutral_a'], 
-                'tension_phase_neutral_b': event['tension_phase_neutral_b'], 
-                'tension_phase_neutral_c': event['tension_phase_neutral_c'], 
-                'current_a': event['current_a'], 
-                'current_b': event['current_b'], 
-                'current_c': event['current_c'],
-                'thd_tension_a': event['thd_tension_a'],
-                'thd_tension_b': event['thd_tension_b'],
-                'thd_tension_c': event['thd_tension_c'],
-                'thd_current_a': event['thd_current_a'],
-                'thd_current_b': event['thd_current_b'],
-                'thd_current_c': event['thd_current_c']   
-            }
-        
+        if 'f_value' in event:
+            table = get_table(event['capture_id'])  
         elif 'product' in event:
-            
-            data = {
-                'index':event['index'],
-                'capture_id':event['capture_id'],
-                'datetime_read':event['datetime_read'],
-                'value':event['value'],
-                'product':event['product']
-            }
-
-        elif 'p_value' in event:
-
-            data = {
-                'index':event['index'],
-                'capture_id': event['capture_id'],
-                'datetime_register': datetime.now().isoformat(),
-                'datetime_read': event['datetime_read'],
-                'p_value': event['p_value']
-            }
-
-        elif 'f_value' in event:
-
-            data = {
-                'index':event['index'],
-                'capture_id': event['capture_id'],
-                'datetime_read': event['datetime_read'],
-                'f_value': event['f_value']
-            }            
-
+                product = get_product(event)
+                if not product:
+                    if create_product(event):
+                        product = get_product(event)
         else:
-            data = {
-                'index':event['index'],
-                'capture_id': event['capture_id'],
-                'datetime_register': datetime.now().isoformat(),
-                'datetime_read': event['datetime_read'],
-                'value': event['value']
+            equipment = get_equipment(event)
+            
+
+        if equipment or table or product:
+
+            if 'value_active' in event:
+            # Datetime register is the current datetime.
+
+                period = set_period(event)
+                
+                data = {
+                    'index':event['index'],
+                    'capture_id': event['capture_id'],
+                    'datetime_register': datetime.now().isoformat(),
+                    'datetime_read': event['datetime_read'],
+                    'value_active': event['value_active'],
+                    'value_reactive': event['value_reactive'],
+                    'period': period,
+                    'tension_phase_neutral_a': event['tension_phase_neutral_a'], 
+                    'tension_phase_neutral_b': event['tension_phase_neutral_b'], 
+                    'tension_phase_neutral_c': event['tension_phase_neutral_c'], 
+                    'current_a': event['current_a'], 
+                    'current_b': event['current_b'], 
+                    'current_c': event['current_c'],
+                    'thd_tension_a': event['thd_tension_a'],
+                    'thd_tension_b': event['thd_tension_b'],
+                    'thd_tension_c': event['thd_tension_c'],
+                    'thd_current_a': event['thd_current_a'],
+                    'thd_current_b': event['thd_current_b'],
+                    'thd_current_c': event['thd_current_c'],
+                    'plant_equipment_id':equipment,
+                    'table':'measurement'   
+                }
+            
+            elif 'product' in event:
+
+                data = {
+                    'index':event['index'],
+                    'capture_id':event['capture_id'],
+                    'datetime_read':event['datetime_read'],
+                    'value':event['value'],
+                    'product':product,
+                    'table':'manufactured'
+                }
+
+            elif 'p_value' in event:
+
+                data = {
+                    'index':event['index'],
+                    'capture_id': event['capture_id'],
+                    'datetime_register': datetime.now().isoformat(),
+                    'datetime_read': event['datetime_read'],
+                    'p_value': event['p_value'],
+                    'plant_equipment_id':equipment,
+                    'table':'processes'  
+                }
+
+            elif 'f_value' in event:
+                if table == 'processes':
+
+                    data = {
+                        'index':event['index'],
+                        'capture_id': event['capture_id'],
+                        'datetime_read': event['datetime_read'],
+                        'f_value': event['f_value'],
+                        'table':'filter_processes'  
+                    }
+
+                elif table == 'utility':
+
+                    data = {
+                        'index':event['index'],
+                        'capture_id': event['capture_id'],
+                        'datetime_read': event['datetime_read'],
+                        'f_value': event['f_value'],
+                        'table':'filter_utility'  
+                    }
+
+                else:
+                    data = {
+                        'index':event['index'],
+                        'capture_id': event['capture_id'],
+                        'datetime_read': event['datetime_read'],
+                        'f_value': event['f_value'],
+                        'table':'filter_measurement'  
+                    }                    
+
+
+            else:
+                data = {
+                    'index':event['index'],
+                    'capture_id': event['capture_id'],
+                    'datetime_register': datetime.now().isoformat(),
+                    'datetime_read': event['datetime_read'],
+                    'value': event['value'],
+                    'plant_equipment_id':equipment,
+                    'table':'utility'  
+                }
+        
+        else:
+            return {
+                'index':count,
+                'error':f'Medidor {event["capture_id"]} não encontrado'
             }
+
 
     except Exception as error:
         data = {}
@@ -917,16 +861,18 @@ def get_data(event):
 
 
 
-def get_equipment(conn, data):
+def get_equipment(data):
     """
     Get the equipment, corresponding to the message received.
     @param conn: Connection with PostgreSql
     @param data: Datas received.
     @return: Equipment.
     """
-    cur = conn.cursor()
+    conn = None
 
     try:
+        conn = connect_postgres()
+        cur = conn.cursor()
         sql = (
             "SELECT plant_equipment_id "
             "FROM plant_equipment "
@@ -937,10 +883,6 @@ def get_equipment(conn, data):
         cur.close()
         if equipment is None:
             capture_id = data['capture_id']
-            failed_data.append({
-                'index':data['index'],
-                'capture_id': f"'{capture_id}' medidor não encontrado"
-            })
 
             return None
 
@@ -952,20 +894,25 @@ def get_equipment(conn, data):
 
         logger.error("Equipment not found: {}".format(data['capture_id']))
 
-    return equipment
+    finally:
+        if conn is not None:
+            conn.close()
+            return equipment
 
 
 
-def get_product(conn, data):
+def get_product(data):
     """
     Get the product, corresponding to the message received.
     @param conn: Connection with PostgreSql
     @param data: Datas received.
     @return: Product.
     """
-    cur = conn.cursor()
+    conn = None
 
     try:
+        conn = connect_postgres()
+        cur = conn.cursor()
         sql = (
             "SELECT product_id "
             "FROM product "
@@ -983,12 +930,15 @@ def get_product(conn, data):
         product = None
 
         logger.error("Product: {} will be created".format(data['product']))
+    finally:
+        if conn is not None:
+            conn.close()
 
     return product
 
 
 
-def create_product(conn, data):
+def create_product(data):
     """
     Create the product, corresponding to the message received.
     @param conn: Connection with PostgreSql
@@ -996,11 +946,13 @@ def create_product(conn, data):
     @return: Product.
     """
 
-    cur = conn.cursor()
-
     inserted = False
 
+    conn = None
+
     try:
+        conn = connect_postgres()
+        cur = conn.cursor()
         sql = (
             "INSERT INTO product ("
             "name, "
@@ -1030,6 +982,10 @@ def create_product(conn, data):
 
         logger.error("Product not inserted: {}".format(data['product']))
 
+    finally:
+        if conn is not None:
+            conn.close()
+
     return inserted
 
 
@@ -1040,7 +996,7 @@ def check_filter(date):
     row = 0
 
     try:
-        conn = connect_postgres(0)
+        conn = connect_postgres()
 
         sql = f"""
             SELECT datetime_read
@@ -1069,7 +1025,7 @@ def insert_filter(date):
     inserted = 0
 
     try:
-        conn = connect_postgres(0)
+        conn = connect_postgres()
 
         sql = f"""
             INSERT INTO filter_processes(datetime_read)
@@ -1094,7 +1050,7 @@ def insert_filter(date):
 
 
 
-def insert_utility(conn, data, plant_equipment_id):
+def insert_utility(data):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1102,24 +1058,19 @@ def insert_utility(conn, data, plant_equipment_id):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
+    conn = None
     try:
-        sql = (
-            "INSERT INTO utility ("
-            "datetime_register, "
-            "datetime_read, "
-            "value, "
-            "plant_equipment_id) "
-            "VALUES "
-            "('{}','{}', '{}', '{}') "
-                .format(   
-                data['datetime_register'],
-                data['datetime_read'],
-                data['value'],
-                plant_equipment_id,
-            )
-        )
+        conn = connect_postgres()
+        sql = """
+        INSERT INTO public.utility(
+            datetime_register, datetime_read, value, plant_equipment_id)
+            VALUES ( %(datetime_register)s, %(datetime_read)s, %(value)s, %(plant_equipment_id)s)
+        ON CONFLICT ON CONSTRAINT utility_datetime_read_plant_equipment_id_8001152b_uniq
+        DO
+            UPDATE SET datetime_register=%(datetime_register)s, value=%(value)s
+        """
         cur = conn.cursor()
-        cur.execute(sql)
+        cur.executemany(sql, data)
         conn.commit()
         cur.close()
         inserted = True
@@ -1129,10 +1080,13 @@ def insert_utility(conn, data, plant_equipment_id):
         inserted = False
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
-    return inserted
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
 
 
-def insert_processes(conn, data, plant_equipment_id):
+def insert_processes(data):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1140,24 +1094,19 @@ def insert_processes(conn, data, plant_equipment_id):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
+    conn = None
     try:
-        sql = (
-            "INSERT INTO processes ("
-            "datetime_register, "
-            "datetime_read, "
-            "p_value, "
-            "plant_equipment_id) "
-            "VALUES "
-            "('{}','{}', '{}', '{}') "
-                .format(   
-                data['datetime_register'],
-                data['datetime_read'],
-                data['p_value'],
-                plant_equipment_id,
-            )
-        )
+        conn = connect_postgres()
+        sql = """
+        INSERT INTO public.processes(
+            datetime_register, datetime_read, p_value, plant_equipment_id)
+            VALUES (%(datetime_register)s, %(datetime_read)s, %(p_value)s, %(plant_equipment_id)s)
+        ON CONFLICT ON CONSTRAINT processes_datetime_read_plant_equipment_id_306ee379_uniq
+        DO
+            UPDATE SET datetime_register=%(datetime_register)s, p_value=%(p_value)s
+        """
         cur = conn.cursor()
-        cur.execute(sql)
+        cur.executemany(sql,data)
         conn.commit()
         cur.close()
         inserted = True
@@ -1167,10 +1116,13 @@ def insert_processes(conn, data, plant_equipment_id):
         inserted = False
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
-    return inserted
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
 
 
-def insert_measurement(conn, data, plant_equipment_id):
+def insert_measurement(data):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1178,54 +1130,57 @@ def insert_measurement(conn, data, plant_equipment_id):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
+    conn = None
     try:
-        sql = (
-            "INSERT INTO measurement ("
-            "datetime_register, "
-            "datetime_read, "
-            "value_active, "
-            "value_reactive, "
-            "period, "
-            "tension_phase_neutral_a, "
-            "tension_phase_neutral_b, "
-            "tension_phase_neutral_c, "
-            "current_a, "
-            "current_b, "
-            "current_c, "
-            "thd_tension_a, "
-            "thd_tension_b, "
-            "thd_tension_c, "
-            "thd_current_a,"
-            "thd_current_b,"
-            "thd_current_c, "
-            "plant_equipment_id, "
-            "consolidation_count) "
-            "VALUES "
-            "('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}','{}','{}','{}', '{}','{}','{}','{}','{}','{}','{}', '{}') "
-                .format(   
-                data['datetime_register'],
-                data['datetime_read'],
-                data['value_active'],
-                data['value_reactive'],
-                data['period'],
-                data['tension_phase_neutral_a'],
-                data['tension_phase_neutral_b'],
-                data['tension_phase_neutral_c'],
-                data['current_a'],
-                data['current_b'],
-                data['current_c'],
-                data['thd_tension_a'],
-                data['thd_tension_b'],
-                data['thd_tension_c'],
-                data['thd_current_a'],
-                data['thd_current_b'],
-                data['thd_current_c'],
-                plant_equipment_id,
-                1,
-            )
+        conn = connect_postgres()
+        sql = """
+        INSERT INTO public.measurement(
+        datetime_register,
+        datetime_read, 
+        value_active, 
+        value_reactive, 
+        period, 
+        tension_phase_neutral_a, 
+        tension_phase_neutral_b, 
+        tension_phase_neutral_c, 
+        current_a, 
+        current_b, 
+        current_c, 
+        thd_tension_a, 
+        thd_tension_b, 
+        thd_tension_c, 
+        thd_current_a, 
+        thd_current_b, 
+        thd_current_c, 
+        consolidation_count, 
+        plant_equipment_id)
+        VALUES (
+            %(datetime_register)s,
+            %(datetime_read)s, 
+            %(value_active)s, 
+            %(value_reactive)s, 
+            %(period)s, 
+            %(tension_phase_neutral_a)s, 
+            %(tension_phase_neutral_b)s, 
+            %(tension_phase_neutral_c)s, 
+            %(current_a)s, 
+            %(current_b)s, 
+            %(current_c)s, 
+            %(thd_tension_a)s, 
+            %(thd_tension_b)s, 
+            %(thd_tension_c)s, 
+            %(thd_current_a)s, 
+            %(thd_current_b)s, 
+            %(thd_current_c)s, 
+            1, 
+            %(plant_equipment_id)s
         )
+        ON CONFLICT ON CONSTRAINT measurement_datetime_read_plant_equipment_id_22c8604f_uniq
+        DO
+            UPDATE SET datetime_register=%(datetime_register)s, value_active=%(value_active)s, value_reactive=%(value_reactive)s
+        """
         cur = conn.cursor()
-        cur.execute(sql)
+        cur.executemany(sql, data)
         conn.commit()
         cur.close()
         inserted = True
@@ -1235,28 +1190,38 @@ def insert_measurement(conn, data, plant_equipment_id):
         inserted = False
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
-    return inserted
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
 
 
-def insert_processes_filters(conn, data):
+def insert_processes_filters(data):
 
     cols = get_table_columns()
-    capture_id = data['capture_id']
-    column = cols['processes'][capture_id]['column']
 
-    try:
-        sql = """
+    sql = ''
+
+    for d in data:
+        capture_id = d['capture_id']
+        column = cols['processes'][capture_id]['column']
+
+        sql += f"""
             INSERT INTO public.filter_processes(
-                datetime_read, {0})
-                VALUES (%(datetime_read)s, %(f_value)s)
-            ON CONFLICT ON CONSTRAINT processes_filters_pkey
+                datetime_read, {column})
+                VALUES ('{d['datetime_read']}', '{d['f_value']}')
+            ON CONFLICT ON CONSTRAINT filter_processes_pkey
             DO
-                UPDATE SET {0} = %(f_value)s;
-        """.format(column)
+                UPDATE SET {column} = '{d['f_value']}';
+        """
 
-        conn = connect_postgres(0)
+    conn = None
+
+    try:
+        conn = connect_postgres()
+        conn = connect_postgres()
         cur = conn.cursor()
-        cur.execute(sql, data)
+        cur.execute(sql)
         conn.commit()
         cur.close()
         inserted = True
@@ -1272,25 +1237,32 @@ def insert_processes_filters(conn, data):
 
 
 
-def insert_utility_filters(conn, data):
+def insert_utility_filters(data):
 
     cols = get_table_columns()
-    capture_id = data['capture_id']
-    column = cols['utility'][capture_id]['column']
 
-    try:
-        sql = """
+    sql = ''
+
+    for d in data:
+        capture_id = d['capture_id']
+        column = cols['utility'][capture_id]['column']
+
+        sql += f"""
             INSERT INTO public.filter_utility(
-                datetime_read, {0})
-                VALUES (%(datetime_read)s, %(f_value)s)
-            ON CONFLICT ON CONSTRAINT utility_filters_pkey
+                datetime_read, {column})
+                VALUES ('{d['datetime_read']}', '{d['f_value']}')
+            ON CONFLICT ON CONSTRAINT filter_utility_pkey
             DO
-                UPDATE SET {0} = %(f_value)s;
-        """.format(column)
+                UPDATE SET {column} = '{d['f_value']}';
+        """
 
-        conn = connect_postgres(0)
+    conn = None
+
+    try:
+        conn = connect_postgres()
+        conn = connect_postgres()
         cur = conn.cursor()
-        cur.execute(sql, data)
+        cur.execute(sql)
         conn.commit()
         cur.close()
         inserted = True
@@ -1306,25 +1278,32 @@ def insert_utility_filters(conn, data):
 
 
 
-def insert_measurement_filters(conn, data):
+def insert_measurement_filters(data):
 
     cols = get_table_columns()
-    capture_id = data['capture_id']
-    column = cols['measurement'][capture_id]['column']
+
+    sql = ''
+
+    for d in data:
+        capture_id = d['capture_id']
+        column = cols['measurement'][capture_id]['column']
+
+        sql += f"""
+            INSERT INTO public.filter_measurement(
+                datetime_read, {column})
+                VALUES ('{d['datetime_read']}', '{d['f_value']}')
+            ON CONFLICT ON CONSTRAINT filter_measurement_pkey
+            DO
+                UPDATE SET {column} = '{d['f_value']}';
+        """
+
+    conn = None
 
     try:
-        sql = """
-            INSERT INTO public.filter_measurement(
-                datetime_read, {0})
-                VALUES (%(datetime_read)s, %(f_value)s)
-            ON CONFLICT ON CONSTRAINT measurement_filters_pkey
-            DO
-                UPDATE SET {0} = %(f_value)s;
-        """.format(column)
-
-        conn = connect_postgres(0)
+        conn = connect_postgres()
+        conn = connect_postgres()
         cur = conn.cursor()
-        cur.execute(sql, data)
+        cur.execute(sql)
         conn.commit()
         cur.close()
         inserted = True
@@ -1339,279 +1318,7 @@ def insert_measurement_filters(conn, data):
             return inserted
 
 
-
-def register_utility(conn, data):
-    """
-    Register utility.
-    @param conn: Connection with PostgreSql.
-    @param data: Data to be inserted.
-    @return: True
-    """
-    equipment = get_equipment(conn, data)
-    if equipment:
-        if not update_utility(conn, data, equipment):
-            insert_utility(conn, data, equipment)
-    return True
-
-
-def register_processes(conn, data):
-    """
-    Register utility.
-    @param conn: Connection with PostgreSql.
-    @param data: Data to be inserted.
-    @return: True
-    """
-    equipment = get_equipment(conn, data)
-    if equipment:
-        date = data['datetime_read']
-        filter = check_filter(date)
-
-        if filter == 0:
-            insert_filter(date)
-        if not update_processes(conn, data, equipment):
-            insert_processes(conn, data, equipment)
-    return True
-
-
-def register_filter_table(conn, data):
-
-    table = get_table(data['capture_id'])
-
-    if table == 'processes':
-        insert_processes_filters(conn, data)
-    elif table == 'utility':
-        insert_utility_filters(conn, data)
-    elif table == 'measurement':
-        insert_measurement_filters(conn, data)    
-    else:
-         logger.info('Table not found')
-
-
-def register_measurement(conn, data):
-    """
-    Register measurement.
-    @param conn: Connection with PostgreSql.
-    @param data: Data to be inserted.
-    @return: True
-    """
-    equipment = get_equipment(conn, data)
-    if equipment:
-        if not update_measurement(conn, data, equipment):
-            insert_measurement(conn, data, equipment)
-    return True
-
-
-
-def update_utility(conn, data, equipment):
-    """
-    Update utility into PostgreSql.
-    @param conn: Connection with PostgreSql
-    @param data: Data to be updated.
-    @param equipment: Equipment of the Datas.
-    @return: Success or failure in the update.
-    """
-    sql = ''
-    try:
-        sql = (
-            "UPDATE "
-            "utility "
-            "SET "
-            "datetime_register = '{}', "
-            "value = '{}' "
-            "WHERE "
-            "plant_equipment_id = {} AND "
-            "datetime_read = '{}';".format(   
-                data['datetime_register'],
-                data['value'],
-                equipment,
-                data['datetime_read']
-            )
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        updated = cur.rowcount
-        conn.commit()
-        cur.close()
-        if updated:
-            logger.info("Updated in PostgreSql - {}".format(updated))
-
-    except Exception as error:
-        updated = None
-        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
-
-    return updated   
-
-
-def update_processes(conn, data, equipment):
-    """
-    Update processes into PostgreSql.
-    @param conn: Connection with PostgreSql
-    @param data: Data to be updated.
-    @param equipment: Equipment of the Datas.
-    @return: Success or failure in the update.
-    """
-    sql = ''
-    try:
-        sql = (
-            "UPDATE "
-            "processes "
-            "SET "
-            "datetime_register = '{}', "
-            "p_value = '{}' "
-            "WHERE "
-            "plant_equipment_id = {} AND "
-            "datetime_read = '{}';".format(   
-                data['datetime_register'],
-                data['p_value'],
-                equipment,
-                data['datetime_read']
-            )
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        updated = cur.rowcount
-        conn.commit()
-        cur.close()
-        if updated:
-            logger.info("Updated in PostgreSql - {}".format(updated))
-
-    except Exception as error:
-        updated = None
-        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
-
-    return updated   
-
-
-def update_measurement(conn, data, equipment):
-    """
-    Update measurement into PostgreSql.
-    @param conn: Connection with PostgreSql
-    @param data: Data to be updated.
-    @param equipment: Equipment of the Datas.
-    @return: Success or failure in the update.
-    """
-    sql = ''
-    try:
-        sql = (
-            "UPDATE "
-            "measurement "
-            "SET "
-            "datetime_register = '{}', "
-            "value_active = {}, "
-            "value_reactive = {}, "
-            "period = {}, "
-            "tension_phase_neutral_a = (tension_phase_neutral_a+{})/(consolidation_count+1), "
-            "tension_phase_neutral_b = (tension_phase_neutral_b+{})/(consolidation_count+1), "
-            "tension_phase_neutral_c = (tension_phase_neutral_c+{})/(consolidation_count+1), "
-            "current_a = (current_a+{})/(consolidation_count+1), "
-            "current_b = (current_b+{})/(consolidation_count+1), "
-            "current_c = (current_c+{})/(consolidation_count+1), "
-            "thd_tension_a = {},"
-            "thd_tension_b = {},"
-            "thd_tension_c = {},"
-            "thd_current_a = {},"
-            "thd_current_b = {},"
-            "thd_current_c = {},"
-            "consolidation_count = consolidation_count+1 "
-            "WHERE "
-            "plant_equipment_id = {} AND "
-            "datetime_read = '{}';".format(  
-                data['datetime_register'],
-                data['value_active'],
-                data['value_reactive'],
-                data['period'],
-                data['tension_phase_neutral_a'],
-                data['tension_phase_neutral_b'],
-                data['tension_phase_neutral_c'],
-                data['current_a'],
-                data['current_b'],
-                data['current_c'],
-                data['thd_tension_a'],
-                data['thd_tension_b'],
-                data['thd_tension_c'],
-                data['thd_current_a'],
-                data['thd_current_b'],
-                data['thd_current_c'],
-                equipment,
-                data['datetime_read']
-            )
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        updated = cur.rowcount
-        conn.commit()
-        cur.close()
-        if updated:
-            logger.info("Updated in PostgreSql - {}".format(updated))
-
-    except Exception as error:
-        updated = None
-        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
-
-    return updated
-
-
-
-def register_production(conn, data):
-    """
-    Register production.
-    @param conn: Connection with PostgreSql.
-    @param data: Data to be inserted.
-    @return: True
-    """
-    product = get_product(conn, data)
-    if not product:
-        if create_product(conn, data):
-            product = get_product(conn, data)
-            if not update_production(conn, data, product):
-                insert_production(conn, data, product)
-    else:
-        if not update_production(conn, data, product):
-            insert_production(conn, data, product)
-    return True
-
-
-
-def update_production(conn, data, product):
-    """
-    Update production into PostgreSql.
-    @param conn: Connection with PostgreSql
-    @param data: Data to be updated.
-    @param equipment: Equipment of the Datas.
-    @return: Success or failure in the update.
-    """
-    sql = ''
-    try:
-        sql = (
-            "UPDATE "
-            "manufactured "
-            "SET "
-            "value = '{}' "
-            "WHERE "
-            "product_id = {} AND "
-            "datetime_read = '{}';".format(   
-                data['value'],
-                product,
-                data['datetime_read']
-            )
-        )
-        cur = conn.cursor()
-        cur.execute(sql)
-        updated = cur.rowcount
-        conn.commit()
-        cur.close()
-        if updated:
-            logger.info("Updated in PostgreSql - {}".format(updated))
-
-    except Exception as error:
-        updated = None
-        logger.error("Updating in PostgreSql: {}, SQL: {}".format(error, sql))
-
-    return updated   
-
-
-
-def insert_production(conn, data, product):
+def insert_production(data):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1619,22 +1326,19 @@ def insert_production(conn, data, product):
     @param product: Product of the data.
     @return: Success or fail in the insertion.
     """
+    conn = None
     try:
-        sql = (
-            "INSERT INTO manufactured ("
-            "datetime_read, "
-            "value, "
-            "product_id) "
-            "VALUES "
-            "('{}','{}', '{}') "
-                .format(   
-                data['datetime_read'],
-                data['value'],
-                product,
-            )
-        )
+        conn = connect_postgres()
+        sql = """
+        INSERT INTO public.manufactured(
+            datetime_read, value, product_id)
+            VALUES (%(datetime_read)s, %(value)s, %(product)s)
+        ON CONFLICT ON CONSTRAINT manufactured_datetime_read_product_id_59434b9e_uniq
+        DO 
+            UPDATE SET value=%(value)s
+        """
         cur = conn.cursor()
-        cur.execute(sql)
+        cur.executemany(sql, data)
         conn.commit()
         cur.close()
         inserted = True
@@ -1643,7 +1347,9 @@ def insert_production(conn, data, product):
     except Exception as error:
         inserted = False
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
-
-    return inserted
+    finally:
+        if conn is not None:
+            conn.close()
+            return inserted
 
     

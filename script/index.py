@@ -13,7 +13,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-index = 0
 
 
 def lambda_handler(event, context):
@@ -123,6 +122,11 @@ def lambda_handler(event, context):
             return {
             'statusCode': 400,
             'body':json.dumps(list_erros, indent=2)
+            }
+        else:
+            return {
+            'statusCode': 200,
+            'body':json.dumps({'message':'Inserção sem erros'}, indent=2)
             }
 
     except Exception as e:
@@ -512,7 +516,7 @@ def production_validate(event):
             errors['capture_id'] = f"{capture_id} não é do tipo 'string'"
         else:
             capture_id = event['capture_id']
-            regex = re.search(r'^([\d]+)_([\d]+)_([\d]+)$', capture_id)
+            regex = re.search(r'^([\d|\w]+)_([\d|\w]+)_([\d|\w]+)$', capture_id)
             if not regex:
                 errors['capture_id'] = f'{capture_id} não possui formato padrão para o campo (COD-UNIDADE_COD-LINHA_COD-PRODUTO)'
 
@@ -531,7 +535,7 @@ def production_validate(event):
         else:
             errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
 
-    if 'value' in event and type(event['value']) is not float:
+    if 'value' in event and type(event['value']) is not float and type(event['value']) is not int:
         value = event['value']
         errors['value'] = f"'{value}' não é do tipo 'number'"
 
@@ -743,9 +747,9 @@ def get_data(event, count):
             table = get_table(event['capture_id'])  
         elif 'product' in event:
                 product = get_product(event)
-                if not product:
-                    if create_product(event):
-                        product = get_product(event)
+                # if not product:
+                #     if create_product(event):
+                #         product = get_product(event)
         else:
             equipment = get_equipment(event)
             
@@ -847,10 +851,16 @@ def get_data(event, count):
                 }
         
         else:
-            return {
-                'index':count,
-                'error':f'Medidor {event["capture_id"]} não encontrado'
-            }
+            if 'product' in event:
+                return {
+                    'index':count,
+                    'error':f'Produto {event["capture_id"]} não encontrado'
+                }
+            else:
+                return {
+                    'index':count,
+                    'error':f'Medidor {event["capture_id"]} não encontrado'
+                }
 
 
     except Exception as error:
@@ -929,7 +939,7 @@ def get_product(data):
     except Exception as error:
         product = None
 
-        logger.error("Product: {} will be created".format(data['product']))
+        logger.error("Product: {} not found".format(data['product']))
     finally:
         if conn is not None:
             conn.close()

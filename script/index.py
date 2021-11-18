@@ -227,9 +227,7 @@ def get_company():
 
 def data_validate(event):
 
-    capture_ids = get_tables_capture_id()
-
-    if 'capture_id' in event and event['capture_id'] in capture_ids:
+    if 'f_value' in event:
         return static_validate(event)  
     elif 'value_active' in event or 'value_reactive' in event:
         return measurement_validate(event)
@@ -644,8 +642,6 @@ def measurement_validate(event):
 
 
 
-
-
 def connect_postgres():
     """
     Establish connect with PostgreSql
@@ -747,9 +743,22 @@ def get_data(event, count):
             table = get_table(event['capture_id'])  
         elif 'product' in event:
                 product = get_product(event)
-                # if not product:
-                #     if create_product(event):
-                #         product = get_product(event)
+                if not product:
+                    line = event['capture_id'].split('_')[1]
+                    product_table = get_product_line()
+
+                    if product_table is not None:
+                        line_id = get_line_id(product_table, line)
+
+                        if line_id is not None:
+                            if create_product(event):
+                                product = get_product(event)
+                                insert_product_relation(product_table, product, line_id)
+                        else:
+                            return {
+                            'index':count,
+                            'error':f'A linha  "{line}" não está presente no banco de dados'
+                        }
         else:
             equipment = get_equipment(event)
             
@@ -947,6 +956,184 @@ def get_product(data):
     return product
 
 
+def get_product_line():
+
+    if check_product_point():
+        return 'product_point'
+    elif check_product_sector():
+        return 'product_sector'
+    elif check_product_company():
+        return 'product_company'
+    else:
+        return None
+    
+
+
+def check_product_company():
+
+    conn = None 
+    row = 0
+
+    sql = """
+        SELECT
+        id
+        FROM product_company
+        LIMIT 1
+    """
+
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.rowcount
+        cur.close()
+    except Exception as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return row
+
+
+def check_product_point():
+
+    conn = None 
+    row = 0
+
+    sql = """
+        SELECT
+        id
+        FROM product_point
+        LIMIT 1
+    """
+
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.rowcount
+        cur.close()
+    except Exception as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return row
+
+
+def check_product_sector():
+
+    conn = None 
+    row = 0
+
+    sql = """
+        SELECT
+        id
+        FROM product_sector
+        LIMIT 1
+    """
+
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.execute(sql)
+        row = cur.rowcount
+        cur.close()
+    except Exception as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+            return row
+
+
+def get_line_id(product_table, line):
+
+    conn = None
+
+    line_id = 0
+
+    if 'point' in product_table:
+        table_id = 'plant_point_id'
+        table = 'plant_point'
+
+    elif 'sector' in product_table:
+        table_id = 'plant_sector_id'
+        table = 'plant_sector'
+    else:
+        table_id = 'company_id'
+        table = 'company'
+
+    if 'company' not in product_table:
+
+        sql = f"""
+            SELECT
+            {table_id}
+            FROM {table}
+            WHERE name = '{line}'
+        """
+
+    else:
+        sql = f"""
+            SELECT
+            c.company_id
+            FROM company c
+            LEFT JOIN company_division d ON c.company_division_id = d.company_division_id
+            WHERE d.name = '{line}'
+        """
+
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.execute(sql)
+        line_id = cur.fetchone()
+        if line_id is not None:
+            line_id = line_id[0]
+        cur.close()
+
+    except Exception as error:
+        print(error)
+
+    finally:
+        if conn is not None:
+            conn.close()
+            return line_id
+
+
+def insert_product_relation(product_table, product_id, line_id):
+
+    conn = None
+    inserted = None
+
+    if 'point' in product_table:
+        column = 'point_id'
+    elif 'sector' in product_table:
+        column = 'sector_id'
+    else:
+        column = 'company_id'
+
+    sql = f"""
+        INSERT INTO {product_table} (product_id, {column})
+            VALUES ({product_id}, {line_id})
+    """ 
+
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.execute(sql)
+        conn.commit()
+        inserted = cur.rowcount
+        cur.close()
+
+    except Exception as error:
+        print(error)
+
+    finally:
+        if conn is not None:
+            conn.close()
+            
+
+
 
 def create_product(data):
     """
@@ -1056,8 +1243,6 @@ def insert_filter(date):
             conn.close()
             return inserted
     
-
-
 
 
 def insert_utility(data):

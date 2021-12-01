@@ -738,6 +738,7 @@ def get_data(event, count):
     error = {}
     equipment = None
     table = None
+    product = None
     try:
         if 'f_value' in event:
             table = get_table(event['capture_id'])  

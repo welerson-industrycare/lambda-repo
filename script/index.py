@@ -119,14 +119,15 @@ def lambda_handler(event, context):
 
 
         if list_erros:
+            insert_log_errors(list_erros)
             return {
             'statusCode': 400,
-            'body':json.dumps(list_erros, indent=2)
+            'body':json.dumps(list_erros, indent=2, ensure_ascii=False)
             }
         else:
             return {
             'statusCode': 200,
-            'body':json.dumps({'message':'Inserção sem erros'}, indent=2)
+            'body':json.dumps({'message':'Inserção sem erros'}, indent=2, ensure_ascii=False)
             }
 
     except Exception as e:
@@ -1099,6 +1100,36 @@ def get_line_id(product_table, line):
         if conn is not None:
             conn.close()
             return line_id
+
+
+def insert_log_errors(list_error):
+
+    conn = None
+
+    error = []
+
+    for l in list_error:
+        error.append({
+            'error':json.dumps(l, ensure_ascii=False)
+        })
+
+    datetime_register = datetime.now().isoformat()
+
+    sql = f"""
+        INSERT INTO integration_errors(datetime_register, error)
+            VALUES('{datetime_register}', %(error)s)
+    """
+    try:
+        conn = connect_postgres()
+        cur = conn.cursor()
+        cur.executemany(sql, error)
+        conn.commit()
+        cur.close()
+    except Exception as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def insert_product_relation(product_table, product_id, line_id):

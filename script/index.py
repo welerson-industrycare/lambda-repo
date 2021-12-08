@@ -7,6 +7,7 @@ import json
 import os
 import psycopg2
 import re
+import chardet
 
 # Logger settings CloudWatch
 logger = logging.getLogger()
@@ -140,8 +141,12 @@ def data_handler(event, count):
     Initial proccess.
     @param event: Message received.
     """
+    log_event = event
+    log_event['len_capture_id'] = len(event['capture_id'])
+    encoding = chardet.detect(event['capture_id'].encode())
+    log_event['encoding'] = encoding['encoding']
 
-    print(event)
+    print(log_event)
 
     
     event['index'] = count
@@ -1578,5 +1583,3 @@ def insert_production(data):
         if conn is not None:
             conn.close()
             return inserted
-
-    

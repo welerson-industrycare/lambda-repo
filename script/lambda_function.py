@@ -1,7 +1,5 @@
 from datetime import datetime
 from typing import final
-from jsonschema import validate, ValidationError
-from jsonschema.validators import validator_for
 import logging
 import json
 import os
@@ -120,7 +118,7 @@ def lambda_handler(event, context):
 
 
         if list_erros:
-            insert_log_errors(list_erros)
+            # insert_log_errors(list_erros)
             return {
             'statusCode': 400,
             'body':json.dumps(list_erros, indent=2, ensure_ascii=False)
@@ -145,7 +143,7 @@ def data_handler(event, count):
     encoding = chardet.detect(event['capture_id'].encode())
     event['encoding'] = encoding['encoding']
 
-    print(event)
+    logger.info("Received event: " + json.dumps(event, indent=2))
 
     event.pop('len_capture_id')
     event.pop('encoding')
@@ -162,7 +160,6 @@ def data_handler(event, count):
             'body': json.dumps('Not Authorized')
         }
 
-    logger.info("Received event: " + json.dumps(event, indent=2))
 
     event_validate = data_validate(event)
 

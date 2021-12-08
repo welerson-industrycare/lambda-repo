@@ -472,7 +472,7 @@ def processes_validate(event):
         else:
             errors['datetime_read'] = f"'{date}' não é do tipo 'string'"
 
-    if 'value' in event and type(event['value']) is not float:
+    if 'p_value' in event and type(event['p_value']) is not float:
         value = event['p_value']
 
         errors['p_value'] = f"'{value}' não é do tipo 'number'"

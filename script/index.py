@@ -141,13 +141,14 @@ def data_handler(event, count):
     Initial proccess.
     @param event: Message received.
     """
-    log_event = event
-    log_event['len_capture_id'] = len(event['capture_id'])
+    event['len_capture_id'] = len(event['capture_id'])
     encoding = chardet.detect(event['capture_id'].encode())
-    log_event['encoding'] = encoding['encoding']
+    event['encoding'] = encoding['encoding']
 
-    print(log_event)
+    print(event)
 
+    event.pop('len_capture_id')
+    event.pop('encoding')
     
     event['index'] = count
 

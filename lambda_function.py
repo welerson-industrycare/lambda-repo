@@ -39,7 +39,7 @@ def lambda_handler(event, context):
                     data = measurement_to_utility(e)
 
                     for d in data:
-                        response = data_handler(d, count)
+                        response = data_handler(d, count, conn)
                         count += 1
                         if 'table' not in  response:
                             list_erros.append(response) 
@@ -60,7 +60,7 @@ def lambda_handler(event, context):
 
                 
                 else:
-                    response = data_handler(d, count)
+                    response = data_handler(d, count, conn)
                     count += 1
                     if 'table' not in  response:
                         list_erros.append(response)
@@ -80,7 +80,7 @@ def lambda_handler(event, context):
                             filter_measurement.append(response)
         else:
             for e in event:
-               response = data_handler(e, count)
+               response = data_handler(e, count, conn)
                count += 1
                if 'table' not in  response:
                    list_erros.append(response)
@@ -102,19 +102,22 @@ def lambda_handler(event, context):
                        filter_measurement.append(response)
 
         if measurement:
-            insert_measurement(measurement)
+            insert_measurement(measurement, conn)
         if utility:
-            insert_utility(utility)
+            insert_utility(utility, conn)
         if processes:
-            insert_processes(processes)
+            insert_processes(processes, conn)
         if manufactured:
-            insert_production(manufactured)
+            insert_production(manufactured, conn)
         if filter_processes:
-            insert_processes_filters(filter_processes)
+            insert_processes_filters(filter_processes, conn)
         if filter_utility:
-            insert_utility_filters(filter_utility)
+            insert_utility_filters(filter_utility, conn)
         if filter_measurement:
-            insert_measurement_filters(filter_measurement)
+            insert_measurement_filters(filter_measurement, conn)
+
+        if conn is not None:
+            conn.close()
 
 
         if list_erros:
@@ -134,20 +137,12 @@ def lambda_handler(event, context):
 
 
 
-def data_handler(event, count):
+def data_handler(event, count, conn):
     """
     Initial proccess.
     @param event: Message received.
     """
-    event['len_capture_id'] = len(event['capture_id'])
-    encoding = chardet.detect(event['capture_id'].encode())
-    event['encoding'] = encoding['encoding']
-
     logger.info("Received event: " + json.dumps(event, indent=2))
-
-    event.pop('len_capture_id')
-    event.pop('encoding')
-    
     event['index'] = count
 
 
@@ -161,11 +156,11 @@ def data_handler(event, count):
         }
 
 
-    event_validate = data_validate(event)
+    event_validate = data_validate(event, conn)
 
     if event_validate == True:
 
-        data = get_data(event, count)
+        data = get_data(event, count, conn)
 
         return data
 
@@ -229,10 +224,10 @@ def get_company():
 
 
 
-def data_validate(event):
+def data_validate(event, conn):
 
     if 'f_value' in event:
-        return static_validate(event)  
+        return static_validate(event, conn)  
     elif 'value_active' in event or 'value_reactive' in event:
         return measurement_validate(event)
     elif 'product' in event or len(event) == 5:
@@ -243,9 +238,9 @@ def data_validate(event):
         return utility_validate(event)
 
 
-def get_col_type():
+def get_col_type(conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     col_types = {}
 
@@ -256,9 +251,9 @@ def get_col_type():
     return col_types
 
 
-def get_table(capture_id):
+def get_table(capture_id, conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     for c in cols:
         if capture_id in cols[c].keys():
@@ -267,11 +262,11 @@ def get_table(capture_id):
     return ''
 
 
-def static_validate(event):
+def static_validate(event, conn):
 
     errors = {}
 
-    col_type = get_col_type()
+    col_type = get_col_type(conn)
 
     list_keys = [
         "index",
@@ -388,9 +383,8 @@ def utility_validate(event):
 
     return True
 
-def get_table_columns():
+def get_table_columns(conn):
 
-    conn = None
 
     sql = """
         SELECT 
@@ -401,19 +395,13 @@ def get_table_columns():
             key = 'staticTable'
     """
 
-    try:
-        conn = connect_postgres()
-
-        cur = conn.cursor()
-
-        cur.execute(sql)
-
-        data = cur.fetchone()
-
-        data = json.loads(data[0])
-
-        cols = {}
+    cols = {}
         
+    try:
+        cur = conn.cursor()
+        cur.execute(sql)
+        data = cur.fetchone()
+        data = json.loads(data[0])
 
         for d in data:
             columns = {}
@@ -427,13 +415,11 @@ def get_table_columns():
     except Exception as error:
         print(error)
     finally:
-            if conn is not None:
-                conn.close()
-                return cols
+        return cols
 
-def get_tables_capture_id():
+def get_tables_capture_id(conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     capture_ids = []
 
@@ -733,7 +719,7 @@ def set_period(event):
 
 
 
-def get_data(event, count):
+def get_data(event, count, conn):
     """
     Extract the data from the message received.
     @param event: Message received.
@@ -745,27 +731,27 @@ def get_data(event, count):
     product = None
     try:
         if 'f_value' in event:
-            table = get_table(event['capture_id'])  
+            table = get_table(event['capture_id'], conn)  
         elif 'product' in event:
-                product = get_product(event)
+                product = get_product(event, conn)
                 if not product:
                     line = event['capture_id'].split('_')[1]
                     product_table = get_product_line()
 
                     if product_table is not None:
-                        line_id = get_line_id(product_table, line)
+                        line_id = get_line_id(product_table, line, conn)
 
                         if line_id is not None:
-                            if create_product(event):
-                                product = get_product(event)
-                                insert_product_relation(product_table, product, line_id)
+                            if create_product(event, conn):
+                                product = get_product(event, conn)
+                                insert_product_relation(product_table, product, line_id, conn)
                         else:
                             return {
                             'index':count,
                             'error':f'A linha  "{line}" não está presente no banco de dados'
                         }
         else:
-            equipment = get_equipment(event)
+            equipment = get_equipment(event, conn)
             
 
         if equipment or table or product:
@@ -885,17 +871,15 @@ def get_data(event, count):
 
 
 
-def get_equipment(data):
+def get_equipment(data, conn):
     """
     Get the equipment, corresponding to the message received.
     @param conn: Connection with PostgreSql
     @param data: Datas received.
     @return: Equipment.
     """
-    conn = None
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         sql = (
             "SELECT plant_equipment_id "
@@ -919,23 +903,19 @@ def get_equipment(data):
         logger.error("Equipment not found: {}".format(data['capture_id']))
 
     finally:
-        if conn is not None:
-            conn.close()
-            return equipment
+        return equipment
 
 
 
-def get_product(data):
+def get_product(data, conn):
     """
     Get the product, corresponding to the message received.
     @param conn: Connection with PostgreSql
     @param data: Datas received.
     @return: Product.
     """
-    conn = None
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         sql = (
             "SELECT product_id "
@@ -954,29 +934,25 @@ def get_product(data):
         product = None
 
         logger.error("Product: {} not found".format(data['product']))
-    finally:
-        if conn is not None:
-            conn.close()
 
     return product
 
 
-def get_product_line():
+def get_product_line(conn):
 
-    if check_product_point():
+    if check_product_point(conn):
         return 'product_point'
-    elif check_product_sector():
+    elif check_product_sector(conn):
         return 'product_sector'
-    elif check_product_company():
+    elif check_product_company(conn):
         return 'product_company'
     else:
         return None
     
 
 
-def check_product_company():
+def check_product_company(conn):
 
-    conn = None 
     row = 0
 
     sql = """
@@ -987,22 +963,17 @@ def check_product_company():
     """
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         row = cur.rowcount
         cur.close()
     except Exception as error:
         print(error)
-    finally:
-        if conn is not None:
-            conn.close()
-            return row
 
 
-def check_product_point():
 
-    conn = None 
+def check_product_point(conn):
+
     row = 0
 
     sql = """
@@ -1013,7 +984,6 @@ def check_product_point():
     """
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         row = cur.rowcount
@@ -1021,14 +991,11 @@ def check_product_point():
     except Exception as error:
         print(error)
     finally:
-        if conn is not None:
-            conn.close()
-            return row
+        return row
 
 
-def check_product_sector():
+def check_product_sector(conn):
 
-    conn = None 
     row = 0
 
     sql = """
@@ -1039,7 +1006,6 @@ def check_product_sector():
     """
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         row = cur.rowcount
@@ -1047,14 +1013,11 @@ def check_product_sector():
     except Exception as error:
         print(error)
     finally:
-        if conn is not None:
-            conn.close()
-            return row
+        return row
 
 
-def get_line_id(product_table, line):
+def get_line_id(product_table, line, conn):
 
-    conn = None
 
     line_id = 0
 
@@ -1088,7 +1051,6 @@ def get_line_id(product_table, line):
         """
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         line_id = cur.fetchone()
@@ -1100,14 +1062,11 @@ def get_line_id(product_table, line):
         print(error)
 
     finally:
-        if conn is not None:
-            conn.close()
-            return line_id
+        return line_id
 
 
-def insert_log_errors(list_error):
+def insert_log_errors(list_error, conn):
 
-    conn = None
 
     error = []
 
@@ -1123,21 +1082,16 @@ def insert_log_errors(list_error):
             VALUES('{datetime_register}', %(error)s)
     """
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.executemany(sql, error)
         conn.commit()
         cur.close()
     except Exception as error:
         print(error)
-    finally:
-        if conn is not None:
-            conn.close()
 
 
-def insert_product_relation(product_table, product_id, line_id):
+def insert_product_relation(product_table, product_id, line_id, conn):
 
-    conn = None
     inserted = None
 
     if 'point' in product_table:
@@ -1153,7 +1107,6 @@ def insert_product_relation(product_table, product_id, line_id):
     """ 
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         conn.commit()
@@ -1162,15 +1115,11 @@ def insert_product_relation(product_table, product_id, line_id):
 
     except Exception as error:
         print(error)
-
-    finally:
-        if conn is not None:
-            conn.close()
             
 
 
 
-def create_product(data):
+def create_product(data, conn):
     """
     Create the product, corresponding to the message received.
     @param conn: Connection with PostgreSql
@@ -1180,10 +1129,8 @@ def create_product(data):
 
     inserted = False
 
-    conn = None
 
     try:
-        conn = connect_postgres()
         cur = conn.cursor()
         sql = (
             "INSERT INTO product ("
@@ -1214,21 +1161,17 @@ def create_product(data):
 
         logger.error("Product not inserted: {}".format(data['product']))
 
-    finally:
-        if conn is not None:
-            conn.close()
 
     return inserted
 
 
-def check_filter(date):
+def check_filter(date, conn):
 
-    conn = None 
 
     row = 0
 
     try:
-        conn = connect_postgres()
+    
 
         sql = f"""
             SELECT datetime_read
@@ -1245,19 +1188,15 @@ def check_filter(date):
         print(error)
 
     finally:
-        if conn is not None:
-            conn.close()
-            return row
+        return row
 
 
-def insert_filter(date):
+def insert_filter(date, conn):
 
-    conn = None 
 
     inserted = 0
 
     try:
-        conn = connect_postgres()
 
         sql = f"""
             INSERT INTO filter_processes(datetime_read)
@@ -1274,13 +1213,11 @@ def insert_filter(date):
         print(error)
 
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
     
 
 
-def insert_utility(data):
+def insert_utility(data, conn):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1288,9 +1225,7 @@ def insert_utility(data):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
-    conn = None
     try:
-        conn = connect_postgres()
         sql = """
         INSERT INTO public.utility(
             datetime_register, datetime_read, value, plant_equipment_id)
@@ -1311,12 +1246,10 @@ def insert_utility(data):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
-def insert_processes(data):
+def insert_processes(data, conn):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1324,9 +1257,7 @@ def insert_processes(data):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
-    conn = None
     try:
-        conn = connect_postgres()
         sql = """
         INSERT INTO public.processes(
             datetime_register, datetime_read, p_value, plant_equipment_id)
@@ -1347,12 +1278,10 @@ def insert_processes(data):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
-def insert_measurement(data):
+def insert_measurement(data, conn):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1360,9 +1289,8 @@ def insert_measurement(data):
     @param equipment: Equipment of the datas.
     @return: Success or fail in the insertion.
     """
-    conn = None
+
     try:
-        conn = connect_postgres()
         sql = """
         INSERT INTO public.measurement(
         datetime_register,
@@ -1421,14 +1349,12 @@ def insert_measurement(data):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
 
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
-def insert_processes_filters(data):
+def insert_processes_filters(data, conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     sql = ''
 
@@ -1445,11 +1371,8 @@ def insert_processes_filters(data):
                 UPDATE SET {column} = '{d['f_value']}';
         """
 
-    conn = None
 
     try:
-        conn = connect_postgres()
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         conn.commit()
@@ -1461,15 +1384,13 @@ def insert_processes_filters(data):
         inserted = False
         print(error)
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
 
-def insert_utility_filters(data):
+def insert_utility_filters(data, conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     sql = ''
 
@@ -1486,11 +1407,8 @@ def insert_utility_filters(data):
                 UPDATE SET {column} = '{d['f_value']}';
         """
 
-    conn = None
 
     try:
-        conn = connect_postgres()
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         conn.commit()
@@ -1502,15 +1420,13 @@ def insert_utility_filters(data):
         inserted = False
         print(error)
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
 
-def insert_measurement_filters(data):
+def insert_measurement_filters(data, conn):
 
-    cols = get_table_columns()
+    cols = get_table_columns(conn)
 
     sql = ''
 
@@ -1527,11 +1443,8 @@ def insert_measurement_filters(data):
                 UPDATE SET {column} = '{d['f_value']}';
         """
 
-    conn = None
 
     try:
-        conn = connect_postgres()
-        conn = connect_postgres()
         cur = conn.cursor()
         cur.execute(sql)
         conn.commit()
@@ -1543,12 +1456,10 @@ def insert_measurement_filters(data):
         inserted = False
         print(error)
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
-def insert_production(data):
+def insert_production(data, conn):
     """
     Insert datas into PostgreSql.
     @param conn: Connection with PostgreSql
@@ -1556,9 +1467,7 @@ def insert_production(data):
     @param product: Product of the data.
     @return: Success or fail in the insertion.
     """
-    conn = None
     try:
-        conn = connect_postgres()
         sql = """
         INSERT INTO public.manufactured(
             datetime_read, value, product_id)
@@ -1578,11 +1487,13 @@ def insert_production(data):
         inserted = False
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
     finally:
-        if conn is not None:
-            conn.close()
-            return inserted
+        return inserted
 
 
-event = [{ "capture_id":"431_142","datetime_read": "2021-12-14T06:00:00-03:00","value": 29.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T06:15:00-03:00","value": 29.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T06:30:00-03:00","value": 32.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T06:45:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T07:00:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T07:15:00-03:00","value": 37.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T07:30:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T07:45:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T08:00:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T08:15:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T08:30:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T08:45:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T09:00:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T09:15:00-03:00","value": 27.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T09:30:00-03:00","value": 30.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T09:45:00-03:00","value": 36.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T10:00:00-03:00","value": 54.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T10:15:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T10:30:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T10:45:00-03:00","value": 37.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T11:00:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T11:15:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T11:30:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T11:45:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T12:00:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T12:15:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T12:30:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T12:45:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T13:00:00-03:00","value": 38.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T13:15:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T13:30:00-03:00","value": 34.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T13:45:00-03:00","value": 43.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T14:00:00-03:00","value": 61.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T14:15:00-03:00","value": 65.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T14:30:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T14:45:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T15:00:00-03:00","value": 44.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T15:15:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T15:30:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T15:45:00-03:00","value": 39.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T16:00:00-03:00","value": 32.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T16:15:00-03:00","value": 26.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T16:30:00-03:00","value": 22.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T16:45:00-03:00","value": 36.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T17:00:00-03:00","value": 36.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T17:15:00-03:00","value": 30.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T17:30:00-03:00","value": 32.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T17:45:00-03:00","value": 799.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T18:00:00-03:00","value": 3249.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T18:15:00-03:00","value": 2362.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T18:30:00-03:00","value": 787.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T18:45:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T19:00:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T19:15:00-03:00","value": 44.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T19:30:00-03:00","value": 30.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T19:45:00-03:00","value": 25.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T20:00:00-03:00","value": 25.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T20:15:00-03:00","value": 45.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T20:30:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T20:45:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T21:00:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T21:15:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T21:30:00-03:00","value": 43.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T21:45:00-03:00","value": 46.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T22:00:00-03:00","value": 33.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T22:15:00-03:00","value": 34.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T22:30:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T22:45:00-03:00","value": 47.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T23:00:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T23:15:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T23:30:00-03:00","value": 42.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T23:45:00-03:00","value": 45.000000},{ "capture_id":"431_142","datetime_read": "2021-12-15T00:00:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T04:30:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T04:45:00-03:00","value": 44.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T05:00:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T05:15:00-03:00","value": 41.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T05:30:00-03:00","value": 40.000000},{ "capture_id":"431_142","datetime_read": "2021-12-14T05:45:00-03:00","value": 34.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T15:15:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T15:30:00-03:00","value": 61.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T15:45:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T16:00:00-03:00","value": 69.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T16:15:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T16:30:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T16:45:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T17:00:00-03:00","value": 69.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T17:15:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T17:30:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T17:45:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T18:00:00-03:00","value": 67.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T18:15:00-03:00","value": 70.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T18:30:00-03:00","value": 56.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T18:45:00-03:00","value": 49.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T19:00:00-03:00","value": 66.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T19:15:00-03:00","value": 66.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T19:30:00-03:00","value": 68.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T19:45:00-03:00","value": 66.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T20:00:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T20:15:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T20:30:00-03:00","value": 68.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T20:45:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T21:00:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T21:15:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T21:30:00-03:00","value": 67.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T21:45:00-03:00","value": 72.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T22:00:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T22:15:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T22:30:00-03:00","value": 65.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T22:45:00-03:00","value": 70.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T23:00:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T23:15:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T23:30:00-03:00","value": 63.000000},{ "capture_id":"431_209","datetime_read": "2021-12-15T23:45:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T00:00:00-03:00","value": 70.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T00:15:00-03:00","value": 65.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T00:30:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T00:45:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T01:00:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T01:15:00-03:00","value": 71.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T01:30:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T01:45:00-03:00","value": 64.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T02:00:00-03:00","value": 52.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T02:15:00-03:00","value": 74.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T02:30:00-03:00","value": 66.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T02:45:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T03:00:00-03:00","value": 59.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T03:15:00-03:00","value": 62.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T03:30:00-03:00","value": 67.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T03:45:00-03:00","value": 61.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T04:00:00-03:00","value": 61.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T04:15:00-03:00","value": 61.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T04:30:00-03:00","value": 68.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T04:45:00-03:00","value": 60.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T05:00:00-03:00","value": 61.000000},{ "capture_id":"431_209","datetime_read": "2021-12-16T05:15:00-03:00","value": 60.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T13:30:00-03:00","value": 25.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T13:45:00-03:00","value": 43.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T14:00:00-03:00","value": 23.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T14:15:00-03:00","value": 4.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T14:30:00-03:00","value": 38.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T14:45:00-03:00","value": 39.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T15:00:00-03:00","value": 48.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T15:15:00-03:00","value": 40.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T15:30:00-03:00","value": 41.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T15:45:00-03:00","value": 41.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T16:00:00-03:00","value": 48.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T16:15:00-03:00","value": 43.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T16:30:00-03:00","value": 44.000000},{ "capture_id":"431_269","datetime_read": "2021-12-09T16:45:00-03:00","value": 44.000000}]
 
-lambda_handler(event, 0)
+
+
+
+
+
+

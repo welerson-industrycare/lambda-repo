@@ -736,7 +736,7 @@ def get_data(event, count, conn):
                 product = get_product(event, conn)
                 if not product:
                     line = event['capture_id'].split('_')[1]
-                    product_table = get_product_line()
+                    product_table = get_product_line(conn)
 
                     if product_table is not None:
                         line_id = get_line_id(product_table, line, conn)
@@ -747,9 +747,16 @@ def get_data(event, count, conn):
                                 insert_product_relation(product_table, product, line_id, conn)
                         else:
                             return {
-                            'index':count,
-                            'error':f'A linha  "{line}" não está presente no banco de dados'
+                            "index":count,
+                            'error':f"A linha  '{line}' não está presente no banco de dados"
                         }
+
+                    else:
+                        return {
+                            "index":count,
+                            'error':f"A linha  '{line}' não está presente no banco de dados"
+                        }
+
         else:
             equipment = get_equipment(event, conn)
             
@@ -1488,12 +1495,5 @@ def insert_production(data, conn):
         logger.error("Inserting in PostgreSql: {}, SQL: {}".format(error, sql))
     finally:
         return inserted
-
-
-
-
-
-
-
 
 

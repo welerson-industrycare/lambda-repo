@@ -1,11 +1,10 @@
 from datetime import datetime
-from typing import final
 import logging
 import json
 import os
 import psycopg2
 import re
-import chardet
+from psycopg2 import pool
 
 # Logger settings CloudWatch
 logger = logging.getLogger()
@@ -29,7 +28,9 @@ def lambda_handler(event, context):
         filter_processes = []
         filter_utility = []
         filter_measurement = []
-        conn = connect_postgres()
+        conn, pool_conn = connect_postgres()
+        equipments = get_equipment(conn)
+        products = get_product(conn)
         result = table_type(conn)
         count = 0
         if result:
@@ -39,7 +40,7 @@ def lambda_handler(event, context):
                     data = measurement_to_utility(e)
 
                     for d in data:
-                        response = data_handler(d, count, conn)
+                        response = data_handler(d, count, conn, equipments, products)
                         count += 1
                         if 'table' not in  response:
                             list_erros.append(response) 
@@ -60,7 +61,7 @@ def lambda_handler(event, context):
 
                 
                 else:
-                    response = data_handler(d, count, conn)
+                    response = data_handler(d, count, conn, equipments, products)
                     count += 1
                     if 'table' not in  response:
                         list_erros.append(response)
@@ -80,7 +81,7 @@ def lambda_handler(event, context):
                             filter_measurement.append(response)
         else:
             for e in event:
-               response = data_handler(e, count, conn)
+               response = data_handler(e, count, conn, equipments, products)
                count += 1
                if 'table' not in  response:
                    list_erros.append(response)
@@ -116,8 +117,8 @@ def lambda_handler(event, context):
         if filter_measurement:
             insert_measurement_filters(filter_measurement, conn)
 
-        if conn is not None:
-            conn.close()
+        if pool_conn is not None:
+            pool_conn.closeall()
 
 
         if list_erros:
@@ -137,7 +138,7 @@ def lambda_handler(event, context):
 
 
 
-def data_handler(event, count, conn):
+def data_handler(event, count, conn, equipments, products):
     """
     Initial proccess.
     @param event: Message received.
@@ -160,7 +161,7 @@ def data_handler(event, count, conn):
 
     if event_validate == True:
 
-        data = get_data(event, count, conn)
+        data = get_data(event, count, conn, equipments, products)
 
         return data
 
@@ -638,22 +639,29 @@ def connect_postgres():
     @param data: Message received
     @return: Connection
     """
+
+    conn = None
+    threaded_postgreSQL_pool = None
     try:
         rds_host = os.environ.get('RDS_HOST')
         rds_username = os.environ.get('RDS_USERNAME')
         rds_user_pwd = os.environ.get('RDS_USER_PWD')
         rds_db_name = os.environ.get('RDS_DATABASE')
 
-        conn_string = "host=%s user=%s password=%s dbname=%s" % (
-        rds_host, rds_username, rds_user_pwd, rds_db_name)
-        conn = psycopg2.connect(conn_string)
-        logger.info("Connected with Postgres.")
+        threaded_postgreSQL_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, user=rds_username,
+                                                         password=rds_user_pwd,
+                                                         host=rds_host,
+                                                         database=rds_db_name)
+
+        if threaded_postgreSQL_pool:
+            conn = threaded_postgreSQL_pool.getconn()
+            logger.info("Connected with Postgres.")
 
     except ConnectionError as error:
         conn = None
         logger.error("Connecting with Postgres: ", error)
 
-    return conn 
+    return conn, threaded_postgreSQL_pool 
 
 
 
@@ -719,7 +727,7 @@ def set_period(event):
 
 
 
-def get_data(event, count, conn):
+def get_data(event, count, conn, equipments, products):
     """
     Extract the data from the message received.
     @param event: Message received.
@@ -733,8 +741,9 @@ def get_data(event, count, conn):
         if 'f_value' in event:
             table = get_table(event['capture_id'], conn)  
         elif 'product' in event:
-                product = get_product(event, conn)
-                if not product:
+                if event['capture_id'] in products.keys():
+                    product = products[event['capture_id']]
+                if product is None:
                     line = event['capture_id'].split('_')[1]
                     product_table = get_product_line(conn)
 
@@ -758,7 +767,8 @@ def get_data(event, count, conn):
                         }
 
         else:
-            equipment = get_equipment(event, conn)
+            if event['capture_id'] in equipments.keys():
+                equipment = equipments[event['capture_id']]
             
 
         if equipment or table or product:
@@ -878,7 +888,7 @@ def get_data(event, count, conn):
 
 
 
-def get_equipment(data, conn):
+def get_equipment(conn):
     """
     Get the equipment, corresponding to the message received.
     @param conn: Connection with PostgreSql
@@ -889,32 +899,31 @@ def get_equipment(data, conn):
     try:
         cur = conn.cursor()
         sql = (
-            "SELECT plant_equipment_id "
+            "SELECT id_capture, plant_equipment_id "
             "FROM plant_equipment "
-            "WHERE id_capture = '{}'".format(data['capture_id'])
+            "WHERE id_capture is not null"
         )
         cur.execute(sql)
-        equipment = cur.fetchone()
+        equipment = dict(cur.fetchall())
         cur.close()
-        if equipment is None:
-            capture_id = data['capture_id']
+        if len(equipment) == 0:
+            logger.info("There is no equipment in database")
 
             return None
 
-        equipment = equipment[0]
-        logger.info("Equipment obtained in PostgreSql.")
+        logger.info("Equipments obtained in PostgreSql.")
 
     except Exception as error:
         equipment = None
 
-        logger.error("Equipment not found: {}".format(data['capture_id']))
+        logger.error("Error: {}".format(error))
 
     finally:
         return equipment
 
 
 
-def get_product(data, conn):
+def get_product(conn):
     """
     Get the product, corresponding to the message received.
     @param conn: Connection with PostgreSql
@@ -925,22 +934,22 @@ def get_product(data, conn):
     try:
         cur = conn.cursor()
         sql = (
-            "SELECT product_id "
+            "SELECT id_capture, product_id "
             "FROM product "
-            "WHERE id_capture = '{}'".format(data['capture_id'])
+            "WHERE id_capture is not null"
         )
         cur.execute(sql)
-        product = cur.fetchone()
+        product = dict(cur.fetchall())
         cur.close()
-        if product is None:
-            raise Exception
-        product = product[0]
-        logger.info("Product obtained in PostgreSql.")
+        if len(product) == 0:
+            logger.info("There is no product in database.")
+            return None
+        logger.info("Products obtained in PostgreSql.")
 
     except Exception as error:
         product = None
 
-        logger.error("Product: {} not found".format(data['product']))
+        logger.error("Error: {}".format(error))
 
     return product
 
